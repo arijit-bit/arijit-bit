@@ -100,9 +100,9 @@
 ---
 
 ## 📫 Connect With Me
-- 📧 Email: your-email@example.com  
-- 💼 LinkedIn: your-linkedin-link  
-- 🌐 Portfolio: (add when ready)
+- 📧 Email: arijitpatra204@gmail.com 
+- 💼 LinkedIn: https://www.linkedin.com/in/arijit-bit 
+- 🌐 Portfolio: https://portfolio-1-swart-gamma.vercel.app
 
 ---
 
