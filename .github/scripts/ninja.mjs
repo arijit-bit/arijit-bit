@@ -1,16 +1,18 @@
 #!/usr/bin/env node
-// Cinematic Shadow Ninja profile animation generator (zero dependencies, Node 18+).
+// Feudal Japan / Edo Shinobi Profile Animation Generator (zero dependencies, Node 18+).
 //
-// Features:
-// - Exactly 5 movement rows / lanes (L1 to L5).
-// - Ninja visual height spans approximately 2 rows (~60px tall).
-// - Smooth continuous left-to-right cinematic progression.
-// - Natural 4-frame running cycle with athletic stride and vertical bobbing.
-// - Acrobatic jumping forward roll (full 360° aerial somersault flip) over low spikes.
-// - Ground combat forward roll (full 360° roll along floor, height 26px) under overhead barrier.
-// - 3 distinct blade sword attacks: Horizontal Slash, Diagonal Slice, and Overhead Cleave.
-// - Dynamic blade trails, slash arcs, impact star flashes, directional sparks.
-// - Enemies visibly split/react, shatter into particles, and respawn.
+// Theme: Traditional Japanese / Feudal Edo
+// - Moonlit midnight sky with radiant full moon, distant pagoda silhouettes, bamboo stalks,
+//   and blowing Sakura (cherry blossom) petals drifting across 5 distinct movement lanes.
+// - Authentic Torii gate and traditional wooden bridge rails.
+// - 5 rows of contribution tiles styled as ancient moss-stone / jade seals.
+// - Shinobi Ronin character (~60px tall, 2 rows) with flowing haori coat & crimson scarf ribbons.
+// - 4-frame fluid Edo sprint with authentic low-center-of-gravity stride & vertical bounce.
+// - 360° aerial somersault flip over bamboo spike barricade.
+// - 360° ground combat roll under suspended Torii lantern beam.
+// - Sword combat with Calligraphic Sumi-e Ink and Crimson blade trails.
+// - Climactic Demon Oni Mini-Boss encounter at the climax with horns, glowing eyes,
+//   and dramatic spirit shatter explosion into swirling sakura petals!
 // - Dual theme support: ninja-dark.svg and ninja-light.svg.
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -32,93 +34,128 @@ const CELL_SIZE = 11;
 const CELL_PITCH = 16;
 const GRID_START_X = 44;
 
-// ---------- palettes ----------
+// ---------- Edo Japanese Palettes ----------
 const PALETTES = {
   dark: {
-    bg: "#0d1117",
-    laneLine: "rgba(255, 255, 255, 0.07)",
+    bg: "#090d16",
+    moon: "#fffbe8",
+    moonHalo: "rgba(255, 251, 232, 0.12)",
+    moonCrater: "rgba(217, 203, 163, 0.35)",
+    toriiBeam: "#b91c1c",
+    toriiGlow: "#ef4444",
+    toriiCap: "#18181b",
+    toriiPillar: "#991b1b",
+    laneLine: "rgba(244, 114, 182, 0.08)",
     laneRowBg: [
-      "rgba(22, 27, 34, 0.45)",
-      "rgba(13, 17, 23, 0.25)",
-      "rgba(22, 27, 34, 0.45)",
-      "rgba(13, 17, 23, 0.25)",
-      "rgba(22, 27, 34, 0.45)",
+      "rgba(15, 23, 42, 0.5)",
+      "rgba(9, 13, 22, 0.3)",
+      "rgba(15, 23, 42, 0.5)",
+      "rgba(9, 13, 22, 0.3)",
+      "rgba(15, 23, 42, 0.5)",
     ],
-    emptyCell: "#161b22",
-    levels: ["#0e4429", "#006d32", "#26a641", "#39d353"],
-    rail: "#30363d",
-    railGlow: "#58a6ff",
-    ninjaSuit: "#1b2333",
-    ninjaArmor: "#27354d",
-    ninjaHead: "#141b27",
-    ninjaStroke: "#3b82f6",
-    scarf: "#38bdf8",
-    scarfLight: "#7dd3fc",
+    emptyCell: "#131b2c",
+    levels: ["#064e3b", "#047857", "#10b981", "#34d399"], // Jade seals
+    bridgeRail: "#78350f",
+    bridgePost: "#92400e",
+    bridgeGlow: "rgba(239, 68, 68, 0.3)",
+    sakura1: "#f472b6",
+    sakura2: "#fbcfe8",
+    sakuraGlow: "rgba(244, 114, 182, 0.6)",
+    // Shinobi Ronin
+    shinobiSuit: "#0f172a",
+    shinobiHaori: "#1e293b",
+    shinobiArmor: "#334155",
+    shinobiKasa: "#d97706",
+    scarf: "#f43f5e", // Crimson silk ribbon
+    scarfLight: "#fb7185",
     eye: "#ffffff",
-    katanaHilt: "#0284c7",
-    katanaGuard: "#38bdf8",
     katanaBlade: "#ffffff",
-    katanaEdge: "#38bdf8",
+    katanaEdge: "#f43f5e",
+    katanaHilt: "#e11d48",
+    katanaGuard: "#f59e0b",
+    // VFX: Sumi-e ink + crimson blade trails
     slashCore: "#ffffff",
-    slashGlow: "#38bdf8",
-    slashTrail: "rgba(56, 189, 248, 0.35)",
-    spark: "#38bdf8",
-    sparkAlt: "#ffffff",
-    obstacle: "#f85149",
-    obstacleDark: "#21262d",
-    obstacleWarning: "#da3633",
-    enemyBody: "#1c2430",
-    enemyArmor: "#303b4d",
-    enemyEye: "#ff7b72",
-    enemyCore: "#f85149",
-    enemySparks: "#ff7b72",
-    textMuted: "#6e7681",
-    laneLabel: "#388bfd",
+    slashGlow: "#e11d48",
+    slashInk: "#090d16",
+    slashTrail: "rgba(225, 29, 72, 0.35)",
+    spark: "#fb7185",
+    sparkAlt: "#fbbf24",
+    // Enemies & Mini-Boss
+    enemyBody: "#1e1b4b",
+    enemyArmor: "#312e81",
+    enemyEye: "#f43f5e",
+    // Demon Oni Mini-Boss
+    oniBody: "#7f1d1d",
+    oniArmor: "#1c1917",
+    oniHorns: "#fbbf24",
+    oniEye: "#fef08a",
+    oniMask: "#991b1b",
+    oniClub: "#292524",
+    oniClubSpikes: "#f59e0b",
+    textMuted: "#64748b",
+    laneLabel: "#f43f5e",
   },
   light: {
-    bg: "#ffffff",
-    laneLine: "rgba(0, 0, 0, 0.06)",
+    bg: "#fdfbf7",
+    moon: "#e2e8f0",
+    moonHalo: "rgba(203, 213, 225, 0.2)",
+    moonCrater: "rgba(148, 163, 184, 0.3)",
+    toriiBeam: "#b91c1c",
+    toriiGlow: "rgba(185, 28, 28, 0.2)",
+    toriiCap: "#1c1917",
+    toriiPillar: "#991b1b",
+    laneLine: "rgba(0, 0, 0, 0.05)",
     laneRowBg: [
-      "rgba(246, 248, 250, 0.6)",
-      "rgba(255, 255, 255, 0.3)",
-      "rgba(246, 248, 250, 0.6)",
-      "rgba(255, 255, 255, 0.3)",
-      "rgba(246, 248, 250, 0.6)",
+      "rgba(245, 240, 230, 0.55)",
+      "rgba(253, 251, 247, 0.35)",
+      "rgba(245, 240, 230, 0.55)",
+      "rgba(253, 251, 247, 0.35)",
+      "rgba(245, 240, 230, 0.55)",
     ],
-    emptyCell: "#ebedf0",
-    levels: ["#9be9a8", "#40c463", "#30a14e", "#216e39"],
-    rail: "#d0d7de",
-    railGlow: "#0969da",
-    ninjaSuit: "#1f242c",
-    ninjaArmor: "#32383f",
-    ninjaHead: "#161b22",
-    ninjaStroke: "#0969da",
-    scarf: "#0969da",
-    scarfLight: "#218bff",
+    emptyCell: "#e7e2d7",
+    levels: ["#a7f3d0", "#34d399", "#059669", "#047857"],
+    bridgeRail: "#78350f",
+    bridgePost: "#92400e",
+    bridgeGlow: "rgba(185, 28, 28, 0.2)",
+    sakura1: "#ec4899",
+    sakura2: "#f472b6",
+    sakuraGlow: "rgba(236, 72, 153, 0.4)",
+    // Shinobi Ronin
+    shinobiSuit: "#1c1917",
+    shinobiHaori: "#292524",
+    shinobiArmor: "#44403c",
+    shinobiKasa: "#b45309",
+    scarf: "#dc2626",
+    scarfLight: "#ef4444",
     eye: "#ffffff",
-    katanaHilt: "#0969da",
-    katanaGuard: "#57606a",
-    katanaBlade: "#32383f",
-    katanaEdge: "#0969da",
-    slashCore: "#1b1f24",
-    slashGlow: "#218bff",
-    slashTrail: "rgba(9, 105, 218, 0.25)",
-    spark: "#0969da",
-    sparkAlt: "#cf222e",
-    obstacle: "#cf222e",
-    obstacleDark: "#eaeef2",
-    obstacleWarning: "#cf222e",
-    enemyBody: "#424a53",
-    enemyArmor: "#57606a",
-    enemyEye: "#cf222e",
-    enemyCore: "#cf222e",
-    enemySparks: "#cf222e",
-    textMuted: "#8c959f",
-    laneLabel: "#0969da",
+    katanaBlade: "#1c1917",
+    katanaEdge: "#dc2626",
+    katanaHilt: "#b91c1c",
+    katanaGuard: "#d97706",
+    // VFX
+    slashCore: "#1c1917",
+    slashGlow: "#dc2626",
+    slashInk: "#1c1917",
+    slashTrail: "rgba(220, 38, 38, 0.25)",
+    spark: "#dc2626",
+    sparkAlt: "#d97706",
+    // Enemies & Mini-Boss
+    enemyBody: "#3f3f46",
+    enemyArmor: "#52525b",
+    enemyEye: "#b91c1c",
+    oniBody: "#831843",
+    oniArmor: "#27272a",
+    oniHorns: "#d97706",
+    oniEye: "#dc2626",
+    oniMask: "#9f1239",
+    oniClub: "#18181b",
+    oniClubSpikes: "#d97706",
+    textMuted: "#78716c",
+    laneLabel: "#dc2626",
   },
 };
 
-// ---------- fetch contributions with fallback ----------
+// ---------- contributions fetch with fallback ----------
 async function fetchContributions(login) {
   const fallback = generateFallbackGrid();
   if (!login) return fallback;
@@ -182,106 +219,126 @@ function mapToFiveRows(calendarLevels) {
   return grid;
 }
 
-// ---------- animation timing (total 17.5s loop) ----------
-const T = 17.5;
+// ---------- animation timing (total 18.0s cinematic loop) ----------
+const T = 18.0;
 const pct = (s) => ((s / T) * 100).toFixed(3);
 
-// Timing benchmarks (seconds):
+// Key Choreography Benchmarks (seconds):
 const EVT = {
   enter: 0.0,
-  // Jumping forward roll (somersault flip over spikes at X = 220)
+  // 1. Jumping 360° somersault roll over bamboo spike barricade at X = 220
   jumpStart: 2.1,
   jumpFlipStart: 2.3,
   jumpApex: 2.8,
   jumpFlipEnd: 3.3,
   jumpLand: 3.5,
   jumpRecover: 3.8,
-  // Enemy 1 Horizontal Slash (enemy at X = 360)
-  e1Approach: 5.0,
-  e1Windup: 5.3,
-  e1Hit: 5.6,
-  e1Recover: 6.2,
-  // Ground Combat Roll (rolling forward under overhead barrier at X = 540)
-  rollStart: 7.6,
-  rollSpinStart: 7.9,
-  rollUnder: 8.5,
-  rollSpinEnd: 9.1,
-  rollEnd: 9.4,
-  rollRecover: 9.8,
-  // Enemy 2 Diagonal Slice (enemy at X = 670)
-  e2Approach: 10.9,
-  e2Windup: 11.2,
-  e2Hit: 11.5,
-  e2Recover: 12.1,
-  // Enemy 3 Overhead Cleave (enemy at X = 790)
-  e3Approach: 13.2,
-  e3Leap: 13.5,
-  e3Hit: 13.8,
-  e3Recover: 14.4,
-  // Exit Sprint
-  exitDash: 15.6,
-  offscreen: 16.0,
-  respawn: 16.6,
-  loopEnd: 17.5,
+  // 2. Enemy 1 (Corrupted Ronin at X = 350) — Horizontal Calligraphy Slash
+  e1Approach: 4.9,
+  e1Windup: 5.2,
+  e1Hit: 5.5,
+  e1Recover: 6.0,
+  // 3. Ground 360° combat forward roll under Torii Lantern Gate at X = 530
+  rollStart: 7.5,
+  rollSpinStart: 7.8,
+  rollUnder: 8.4,
+  rollSpinEnd: 9.0,
+  rollEnd: 9.3,
+  rollRecover: 9.7,
+  // 4. Enemy 2 (Shadow Assassin at X = 650) — Diagonal Crescent Slice
+  e2Approach: 10.7,
+  e2Windup: 11.0,
+  e2Hit: 11.3,
+  e2Recover: 11.8,
+  // 5. CLIMACTIC MINI-BOSS BATTLE: Demon Oni Warlord at X = 780!
+  bossApproach: 12.6,
+  bossLeap: 13.0,
+  bossStrike: 13.5, // Ultimate Sakura Iaijutsu Strike!
+  bossShatter: 13.7, // Oni breaks apart into spirit embers
+  bossSheath: 14.3, // Samurai flicks blade & clicks scabbard (Noto)
+  bossRecover: 15.0,
+  // Exit Sprint into the moonlight
+  exitDash: 16.2,
+  offscreen: 16.6,
+  respawn: 17.2,
+  loopEnd: 18.0,
 };
 
-// Ninja trajectory points: [time_sec, x, y_offset_from_ground]
+// Shinobi trajectory points: [time_sec, x, y_offset_from_ground]
 const NINJA_TRAJECTORY = [
   [0.0, -80, 0],
   [1.0, 30, 0],
   [EVT.jumpStart - 0.2, 160, 0],
-  [EVT.jumpStart, 180, 2], // Anticipation crouch before leap
-  [EVT.jumpStart + 0.35, 200, -36], // Rising into flip
-  [EVT.jumpApex, 220, -52], // Somresault apex over spikes at X=220
-  [EVT.jumpApex + 0.35, 240, -32], // Falling from flip
-  [EVT.jumpLand, 260, 2], // Landing absorption
-  [EVT.jumpRecover, 280, 0], // Rebounded back to run
-  [EVT.e1Windup, 330, 0], // Windup before slash
-  [EVT.e1Hit, 360, 0], // Slash impact at X=360
-  [EVT.e1Recover, 385, 0], // Recovery
-  [7.0, 470, 0], // Smooth run section
-  [EVT.rollStart, 505, 0], // Diving into forward ground roll
-  [EVT.rollUnder - 0.4, 530, 0], // Rolling cleanly under barrier
-  [EVT.rollUnder + 0.4, 555, 0],
-  [EVT.rollEnd, 580, 0], // Rolling out onto one knee
-  [EVT.rollRecover, 600, 0], // Standing back up into sprint
-  [EVT.e2Windup, 645, 0], // Sword drawn high
-  [EVT.e2Hit, 670, 0], // Diagonal strike impact
-  [EVT.e2Recover, 695, 0], // Recovery
-  [EVT.e3Approach, 755, 0],
-  [EVT.e3Leap, 775, -18], // Small aerial hop for overhead cleave
-  [EVT.e3Hit, 790, 0], // Downward crash impact
-  [EVT.e3Recover, 810, 2],
-  [EVT.exitDash, 920, 0], // Sprinting offscreen
+  [EVT.jumpStart, 180, 2], // Anticipation crouch before somersault
+  [EVT.jumpStart + 0.35, 200, -36], // Rising
+  [EVT.jumpApex, 220, -52], // Aerial somersault apex soaring over spikes
+  [EVT.jumpApex + 0.35, 240, -32], // Falling
+  [EVT.jumpLand, 260, 2], // Cushioned landing
+  [EVT.jumpRecover, 280, 0], // Rebounded into run
+  [EVT.e1Windup, 320, 0],
+  [EVT.e1Hit, 350, 0], // Slash impact on Bandit
+  [EVT.e1Recover, 375, 0],
+  [6.8, 460, 0], // Uninterrupted moonlit run
+  [EVT.rollStart, 495, 0], // Diving into ground combat roll
+  [EVT.rollUnder - 0.3, 520, 0], // Rolling under Torii gate
+  [EVT.rollUnder + 0.3, 545, 0],
+  [EVT.rollEnd, 570, 0], // Rolling out onto knee
+  [EVT.rollRecover, 590, 0], // Rising into sprint
+  [EVT.e2Windup, 625, 0],
+  [EVT.e2Hit, 650, 0], // Diagonal slice on Assassin
+  [EVT.e2Recover, 675, 0],
+  [EVT.bossApproach, 725, 0],
+  [EVT.bossLeap, 750, -22], // High aerial leap toward Demon Oni
+  [EVT.bossStrike, 775, 0], // Ultimate downward Iaijutsu execution!
+  [EVT.bossSheath, 785, 2], // Sword sheathing pose
+  [EVT.bossRecover, 805, 0],
+  [EVT.exitDash, 920, 0],
   [EVT.offscreen, 1000, 0], // Exited right
   [EVT.loopEnd - 0.01, 1000, 0],
-  [EVT.loopEnd, -80, 0], // Reset
+  [EVT.loopEnd, -80, 0], // Instant reset
 ];
 
 // ---------- SVG builder ----------
 function buildSvg(grid, theme) {
   const p = PALETTES[theme];
 
-  // 1. Five Distinct Movement Rows / Lanes
+  // 1. Distant Moon, Fog, and Bamboo Pagoda Silhouettes
+  const moonX = 810;
+  const moonY = 38;
+  const moonR = 26;
+  const skyBackground = `
+    <!-- Glowing Full Moon -->
+    <circle cx="${moonX}" cy="${moonY}" r="${moonR + 18}" fill="${p.moonHalo}"/>
+    <circle cx="${moonX}" cy="${moonY}" r="${moonR + 8}" fill="${p.moonHalo}"/>
+    <circle cx="${moonX}" cy="${moonY}" r="${moonR}" fill="${p.moon}"/>
+    <!-- Lunar crater details -->
+    <circle cx="${moonX - 8}" cy="${moonY - 6}" r="6" fill="${p.moonCrater}"/>
+    <circle cx="${moonX + 9}" cy="${moonY + 7}" r="5" fill="${p.moonCrater}"/>
+    <circle cx="${moonX - 3}" cy="${moonY + 11}" r="4" fill="${p.moonCrater}"/>
+    <!-- Distant Pagoda & Mountain Silhouettes -->
+    <path d="M 0,90 Q 60,65 140,85 T 280,80 T 420,95 T 560,75 T 700,90 T 850,70 L 920,85 L 920,170 L 0,170 Z" fill="${p.bg}" opacity="0.35"/>
+  `;
+
+  // 2. 5 Distinct Movement Lanes with Torii & Bamboo Motifs
   let lanesSvg = "";
   for (let r = 0; r < ROWS; r++) {
     const y = PAD_TOP + r * ROW_H;
     const bgCol = p.laneRowBg[r];
     lanesSvg += `<rect x="0" y="${y}" width="${WIDTH}" height="${ROW_H}" fill="${bgCol}"/>`;
     if (r > 0) {
-      lanesSvg += `<line x1="0" y1="${y}" x2="${WIDTH}" y2="${y}" stroke="${p.laneLine}" stroke-dasharray="4,6" stroke-width="1"/>`;
+      lanesSvg += `<line x1="0" y1="${y}" x2="${WIDTH}" y2="${y}" stroke="${p.laneLine}" stroke-dasharray="3,7" stroke-width="1"/>`;
     }
   }
 
-  // Row Indicators on left margin (L1 to L5)
+  // Row Indicators on left margin (Traditional Kanji + English)
   let laneMarkers = "";
-  const laneNames = ["L1 · HIGH", "L2 · UPPER", "L3 · MID", "L4 · LOWER", "L5 · GROUND"];
+  const laneNames = ["一 · SKY", "二 · MIST", "三 · BAMBOO", "四 · TORII", "五 · PATH"];
   for (let r = 0; r < ROWS; r++) {
     const y = PAD_TOP + r * ROW_H + ROW_H / 2 + 3;
-    laneMarkers += `<text x="8" y="${y}" fill="${p.textMuted}" font-family="monospace, sans-serif" font-size="7.5" font-weight="600" letter-spacing="0.5" opacity="0.65">${laneNames[r]}</text>`;
+    laneMarkers += `<text x="8" y="${y}" fill="${p.textMuted}" font-family="serif, 'Hiragino Mincho Pro', sans-serif" font-size="7.5" font-weight="600" letter-spacing="0.8" opacity="0.75">${laneNames[r]}</text>`;
   }
 
-  // 2. 5-Row Matrix Cells (GitHub contribution tiles)
+  // 3. Contribution Grid Cells: Ancient Jade / Moss Stone Seals
   let cellsSvg = "";
   for (let r = 0; r < ROWS; r++) {
     const cy = PAD_TOP + r * ROW_H + (ROW_H - CELL_SIZE) / 2;
@@ -289,298 +346,335 @@ function buildSvg(grid, theme) {
       const cx = GRID_START_X + c * CELL_PITCH;
       const level = grid[r][c] || 0;
       const fill = level === 0 ? p.emptyCell : p.levels[Math.min(level - 1, 3)];
-      const op = level === 0 ? "0.4" : "0.95";
-      cellsSvg += `<rect x="${cx}" y="${cy}" width="${CELL_SIZE}" height="${CELL_SIZE}" rx="2.5" fill="${fill}" opacity="${op}"/>`;
+      const op = level === 0 ? "0.35" : "0.95";
+      cellsSvg += `<rect x="${cx}" y="${cy}" width="${CELL_SIZE}" height="${CELL_SIZE}" rx="2" fill="${fill}" opacity="${op}"/>`;
     }
   }
 
-  // 3. Ground Platform Rail at GROUND_Y (170)
+  // 4. Traditional Wooden Bridge Ground Rail at GROUND_Y (170)
   const railSvg = `
-    <line x1="0" y1="${GROUND_Y}" x2="${WIDTH}" y2="${GROUND_Y}" stroke="${p.rail}" stroke-width="2.5"/>
-    <line x1="0" y1="${GROUND_Y}" x2="${WIDTH}" y2="${GROUND_Y}" stroke="${p.railGlow}" stroke-width="1" opacity="0.5"/>
-    ${Array.from({ length: 46 }, (_, i) => `<line x1="${i * 20}" y1="${GROUND_Y}" x2="${i * 20 + 6}" y2="${GROUND_Y + 4}" stroke="${p.rail}" stroke-width="1.2" opacity="0.45"/>`).join("")}
+    <!-- Wooden bridge plank floor -->
+    <line x1="0" y1="${GROUND_Y}" x2="${WIDTH}" y2="${GROUND_Y}" stroke="${p.bridgeRail}" stroke-width="2.5"/>
+    <line x1="0" y1="${GROUND_Y + 2}" x2="${WIDTH}" y2="${GROUND_Y + 2}" stroke="${p.bridgePost}" stroke-width="1.5" opacity="0.8"/>
+    <!-- Guard posts & hanging lanterns -->
+    ${Array.from({ length: 23 }, (_, i) => `
+      <rect x="${i * 40 + 6}" y="${GROUND_Y - 4}" width="4" height="8" rx="1" fill="${p.bridgePost}"/>
+      <circle cx="${i * 40 + 8}" cy="${GROUND_Y - 5}" r="2.2" fill="${p.toriiBeam}" opacity="0.8"/>
+    `).join("")}
   `;
 
-  // 4. Low Obstacle: Ground Spikes at X = 220 (Row 5)
+  // 5. Blowing Sakura Petals (animated drifting cherry blossom petals)
+  const sakuraSvg = `
+    <g class="sakura-wind">
+      <ellipse class="sakura s1" cx="120" cy="40" rx="3.5" ry="2" fill="${p.sakura1}"/>
+      <ellipse class="sakura s2" cx="280" cy="70" rx="4" ry="2.2" fill="${p.sakura2}"/>
+      <ellipse class="sakura s3" cx="440" cy="30" rx="3.2" ry="1.8" fill="${p.sakura1}"/>
+      <ellipse class="sakura s4" cx="590" cy="85" rx="3.8" ry="2" fill="${p.sakura2}"/>
+      <ellipse class="sakura s5" cx="720" cy="50" rx="3" ry="1.7" fill="${p.sakura1}"/>
+      <ellipse class="sakura s6" cx="870" cy="65" rx="3.6" ry="2" fill="${p.sakura2}"/>
+      <ellipse class="sakura s7" cx="200" cy="115" rx="3.5" ry="1.9" fill="${p.sakura1}"/>
+      <ellipse class="sakura s8" cx="510" cy="125" rx="3.2" ry="1.8" fill="${p.sakura2}"/>
+      <ellipse class="sakura s9" cx="820" cy="110" rx="4" ry="2.1" fill="${p.sakura1}"/>
+    </g>
+  `;
+
+  // 6. Obstacle 1: Bamboo Stake Barricade at X = 220 (Low obstacle - jump somersault)
   const spikeX = 220;
   const spikeSvg = `
-    <g id="low-obstacle-spikes">
-      <!-- Glow warning -->
-      <polygon points="${spikeX - 16},170 ${spikeX - 11},148 ${spikeX - 6},170" fill="${p.obstacleWarning}" opacity="0.85"/>
-      <polygon points="${spikeX - 7},170 ${spikeX - 1},144 ${spikeX + 5},170" fill="${p.obstacle}" opacity="0.95"/>
-      <polygon points="${spikeX + 4},170 ${spikeX + 10},150 ${spikeX + 16},170" fill="${p.obstacleWarning}" opacity="0.85"/>
-      <!-- Inner sharp cores -->
-      <line x1="${spikeX - 11}" y1="148" x2="${spikeX - 11}" y2="170" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-      <line x1="${spikeX - 1}" y1="144" x2="${spikeX - 1}" y2="170" stroke="#fff" stroke-width="1.4" opacity="0.85"/>
-      <line x1="${spikeX + 10}" y1="150" x2="${spikeX + 10}" y2="170" stroke="#fff" stroke-width="1.2" opacity="0.7"/>
-      <!-- Base warning plate -->
-      <rect x="${spikeX - 18}" y="167" width="36" height="3" fill="${p.obstacleDark}" stroke="${p.obstacleWarning}" stroke-width="0.8"/>
+    <g id="bamboo-spikes">
+      <!-- Sharpened bamboo stakes lashed together -->
+      <polygon points="${spikeX - 16},170 ${spikeX - 11},146 ${spikeX - 6},170" fill="#a16207"/>
+      <polygon points="${spikeX - 8},170 ${spikeX - 1},142 ${spikeX + 5},170" fill="#ca8a04"/>
+      <polygon points="${spikeX + 3},170 ${spikeX + 10},148 ${spikeX + 16},170" fill="#a16207"/>
+      <!-- Bamboo segment rings & cut angle highlights -->
+      <line x1="${spikeX - 13}" y1="156" x2="${spikeX - 8}" y2="156" stroke="#4d2c00" stroke-width="1.2"/>
+      <line x1="${spikeX - 4}" y1="154" x2="${spikeX + 1}" y2="154" stroke="#4d2c00" stroke-width="1.2"/>
+      <line x1="${spikeX + 7}" y1="158" x2="${spikeX + 12}" y2="158" stroke="#4d2c00" stroke-width="1.2"/>
+      <!-- Rope lashings & warning seal -->
+      <line x1="${spikeX - 18}" y1="164" x2="${spikeX + 18}" y2="164" stroke="#eab308" stroke-width="2" stroke-dasharray="3,2"/>
     </g>
   `;
 
-  // 5. Overhead Barrier: Suspended Laser Girder at X = 540 (Rows 1-3)
-  const barrierX = 540;
-  const barrierSvg = `
-    <g id="overhead-barrier">
-      <!-- Hanging structural girder -->
-      <rect x="${barrierX - 15}" y="10" width="30" height="116" fill="${p.obstacleDark}" stroke="${p.rail}" stroke-width="1.2"/>
-      <line x1="${barrierX - 15}" y1="20" x2="${barrierX + 15}" y2="50" stroke="${p.rail}" stroke-width="1" opacity="0.5"/>
-      <line x1="${barrierX + 15}" y1="50" x2="${barrierX - 15}" y2="80" stroke="${p.rail}" stroke-width="1" opacity="0.5"/>
-      <line x1="${barrierX - 15}" y1="80" x2="${barrierX + 15}" y2="110" stroke="${p.rail}" stroke-width="1" opacity="0.5"/>
-      <!-- Warning hazard stripes at lower block -->
-      <rect x="${barrierX - 17}" y="116" width="34" height="14" rx="2" fill="${p.obstacleDark}" stroke="${p.obstacleWarning}" stroke-width="1.2"/>
-      <path d="M${barrierX - 12},128 L${barrierX - 6},118 M${barrierX - 4},128 L${barrierX + 2},118 M${barrierX + 4},128 L${barrierX + 10},118" stroke="${p.obstacleWarning}" stroke-width="1.8"/>
-      <!-- Laser emitter beam at y = 134 -->
-      <rect x="${barrierX - 13}" y="132" width="26" height="4" rx="2" fill="${p.obstacle}"/>
-      <line x1="${barrierX - 20}" y1="134" x2="${barrierX + 20}" y2="134" stroke="${p.obstacle}" stroke-width="2.5" opacity="0.8"/>
-      <!-- Hazard warning label -->
-      <text x="${barrierX}" y="105" fill="${p.obstacle}" font-family="monospace, sans-serif" font-size="7" font-weight="700" text-anchor="middle" letter-spacing="1">DANGER</text>
+  // 7. Obstacle 2: Sacred Torii Shrine Gate with Hanging Lanterns at X = 530
+  // Clearance under Torii crossbeam = 28px (ninja rolls 360° forward underneath!)
+  const toriiX = 530;
+  const toriiSvg = `
+    <g id="torii-gate">
+      <!-- Curved Top Kasagi Beam -->
+      <path d="M ${toriiX - 30},12 Q ${toriiX},6 ${toriiX + 30},12 L ${toriiX + 28},19 Q ${toriiX},13 ${toriiX - 28},19 Z" fill="${p.toriiCap}"/>
+      <!-- Primary Vermilion Shimaki Crossbeam -->
+      <rect x="${toriiX - 26}" y="19" width="52" height="7" rx="1.5" fill="${p.toriiBeam}"/>
+      <!-- Secondary Nuki Tie-beam at y = 40 -->
+      <rect x="${toriiX - 24}" y="40" width="48" height="4.5" rx="1" fill="${p.toriiBeam}"/>
+      <!-- Twin Vermilion Pillars grounded to path -->
+      <rect x="${toriiX - 20}" y="19" width="6" height="151" fill="${p.toriiPillar}"/>
+      <rect x="${toriiX + 14}" y="19" width="6" height="151" fill="${p.toriiPillar}"/>
+      <!-- Stone Pedestal Base Feet (Kamebara) at ground level -->
+      <rect x="${toriiX - 22}" y="166" width="10" height="4" rx="1" fill="${p.toriiCap}"/>
+      <rect x="${toriiX + 12}" y="166" width="10" height="4" rx="1" fill="${p.toriiCap}"/>
+      <!-- Mid-height Lintel & Sacred Shimenawa Rope at y = 132 -->
+      <rect x="${toriiX - 20}" y="132" width="40" height="3" rx="0.5" fill="${p.toriiBeam}"/>
+      <path d="M ${toriiX - 19},134 Q ${toriiX},138 ${toriiX + 19},134" stroke="#fef08a" stroke-width="1.8" fill="none"/>
+      <polygon points="${toriiX - 9},135 ${toriiX - 6},135 ${toriiX - 8},142 ${toriiX - 11},142" fill="#ffffff"/>
+      <polygon points="${toriiX + 6},135 ${toriiX + 9},135 ${toriiX + 7},142 ${toriiX + 4},142" fill="#ffffff"/>
+      <!-- Hanging Paper Lantern in center (clearance below lantern = 28px) -->
+      <rect x="${toriiX - 4.5}" y="132" width="9" height="10" rx="2" fill="${p.toriiBeam}"/>
+      <circle cx="${toriiX}" cy="137" r="2.5" fill="#fef08a"/>
     </g>
   `;
 
-  // 6. Enemies & Combat Encounters:
+  // 8. Regular Enemies (Corrupted Bandits & Shadow Assassins):
   const enemy1Svg = `
     <g id="enemy-1" class="e1-group">
-      <!-- Top half -->
+      <!-- Top half: Rogue Bandit with Straw Cape & Mask -->
       <g class="e1-top">
-        <path d="M 348,148 L 353,128 L 367,128 L 372,148 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.4"/>
-        <rect x="353" y="135" width="14" height="3" rx="1.5" fill="${p.enemyEye}"/>
-        <circle cx="360" cy="142" r="2.2" fill="${p.enemyCore}"/>
+        <path d="M 340,147 L 344,128 L 356,128 L 360,147 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
+        <ellipse cx="350" cy="133" rx="7" ry="5" fill="${p.toriiCap}"/>
+        <rect x="345" y="135" width="10" height="2.5" rx="1" fill="${p.enemyEye}"/>
       </g>
-      <!-- Bottom half -->
+      <!-- Bottom half: Hakama & Tabi -->
       <g class="e1-bot">
-        <path d="M 347,149 L 373,149 L 369,170 L 351,170 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.4"/>
-        <line x1="360" y1="152" x2="360" y2="168" stroke="${p.enemyArmor}" stroke-width="1"/>
+        <path d="M 339,148 L 361,148 L 358,170 L 342,170 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
+        <line x1="350" y1="152" x2="350" y2="168" stroke="${p.enemyArmor}" stroke-width="1"/>
       </g>
     </g>
   `;
 
   const enemy2Svg = `
     <g id="enemy-2" class="e2-group">
-      <!-- Upper-right piece -->
+      <!-- Upper piece: Shadow Ronin with Jingasa helmet -->
       <g class="e2-top">
-        <polygon points="658,128 679,128 683,153 666,149" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.4"/>
-        <rect x="664" y="135" width="12" height="3" rx="1" fill="${p.enemyEye}"/>
-        <circle cx="672" cy="143" r="2.5" fill="${p.enemyCore}"/>
+        <polygon points="640,128 660,128 663,152 646,148" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
+        <polygon points="636,132 664,132 650,126" fill="${p.toriiCap}"/>
+        <rect x="645" y="136" width="9" height="2.5" rx="1" fill="${p.enemyEye}"/>
       </g>
-      <!-- Lower-left piece -->
+      <!-- Lower piece: Armored greaves -->
       <g class="e2-bot">
-        <polygon points="658,130 665,150 682,154 679,170 659,170 655,151" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.4"/>
-        <rect x="662" y="156" width="14" height="3" rx="1" fill="${p.enemyArmor}"/>
+        <polygon points="640,130 647,149 662,153 659,170 642,170 638,151" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
       </g>
     </g>
   `;
 
-  const enemy3Svg = `
-    <g id="enemy-3" class="e3-group">
-      <!-- Left half -->
-      <g class="e3-left">
-        <path d="M 788,124 L 773,135 L 775,157 L 788,163 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.4"/>
-        <line x1="772" y1="144" x2="788" y2="144" stroke="${p.enemyEye}" stroke-width="1.5"/>
-        <circle cx="781" cy="144" r="2.5" fill="${p.enemyEye}"/>
+  // 9. CLIMACTIC MINI-BOSS: Imposing Demon Oni Warlord (at X = 780)!
+  // Stature: Taller (spans ~2.4 rows!), horned Oni demon mask, glowing eyes, massive spiked Kanabo club!
+  const bossSvg = `
+    <g id="mini-boss-oni" class="boss-group">
+      <!-- Left side of Demon Oni -->
+      <g class="boss-left">
+        <!-- Horn left -->
+        <path d="M 776,110 C 772,98 764,96 760,94 C 764,103 770,111 774,114 Z" fill="${p.oniHorns}"/>
+        <!-- Mask & Head Left -->
+        <path d="M 778,112 L 766,118 L 768,136 L 778,144 Z" fill="${p.oniMask}" stroke="${p.oniArmor}" stroke-width="1.4"/>
+        <circle cx="771" cy="124" r="3" fill="${p.oniEye}"/>
+        <!-- Torso & Armor Left -->
+        <path d="M 778,144 L 760,148 L 763,170 L 778,170 Z" fill="${p.oniBody}" stroke="${p.oniArmor}" stroke-width="1.5"/>
+        <polygon points="764,136 754,142 760,154" fill="${p.oniArmor}"/>
       </g>
-      <!-- Right half -->
-      <g class="e3-right">
-        <path d="M 790,124 L 805,135 L 803,157 L 790,163 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.4"/>
-        <line x1="790" y1="144" x2="806" y2="144" stroke="${p.enemyEye}" stroke-width="1.5"/>
-        <circle cx="797" cy="144" r="2.5" fill="${p.enemyEye}"/>
+      <!-- Right side of Demon Oni + Giant Kanabo Club -->
+      <g class="boss-right">
+        <!-- Horn right -->
+        <path d="M 780,110 C 784,98 792,96 796,94 C 792,103 786,111 782,114 Z" fill="${p.oniHorns}"/>
+        <!-- Mask & Head Right -->
+        <path d="M 778,112 L 790,118 L 788,136 L 778,144 Z" fill="${p.oniMask}" stroke="${p.oniArmor}" stroke-width="1.4"/>
+        <circle cx="785" cy="124" r="3" fill="${p.oniEye}"/>
+        <!-- Torso & Armor Right -->
+        <path d="M 778,144 L 796,148 L 793,170 L 778,170 Z" fill="${p.oniBody}" stroke="${p.oniArmor}" stroke-width="1.5"/>
+        <polygon points="792,136 802,142 796,154" fill="${p.oniArmor}"/>
+        <!-- Giant Iron Kanabo Club held in hand -->
+        <path d="M 796,146 L 808,124 L 814,127 L 802,149 Z" fill="${p.oniClub}"/>
+        <circle cx="810" cy="124" r="2.2" fill="${p.oniClubSpikes}"/>
+        <circle cx="806" cy="131" r="2.2" fill="${p.oniClubSpikes}"/>
+        <circle cx="803" cy="138" r="2.2" fill="${p.oniClubSpikes}"/>
       </g>
     </g>
   `;
 
-  // 7. Attack Effects (Slash Arcs, Blade Trails, Impact Sparks)
+  // 10. Visual Effects (Calligraphic Sumi-e & Crimson Slashes + Boss Sakura Burst)
+  // Attack 1: Horizontal Calligraphy Slash (at X = 350)
   const vfx1Svg = `
     <g class="vfx-1">
-      <path d="M 310,152 Q 355,140 420,145 Q 360,152 310,152 Z" fill="${p.slashTrail}"/>
-      <path d="M 305,150 Q 360,142 425,147" stroke="${p.slashGlow}" stroke-width="4.8" stroke-linecap="round" fill="none" opacity="0.85"/>
-      <path d="M 307,150 Q 360,142 423,147" stroke="${p.slashCore}" stroke-width="2" stroke-linecap="round" fill="none"/>
-      <polygon points="360,135 362,145 372,147 362,149 360,159 358,149 348,147 358,145" fill="${p.slashCore}"/>
-      <circle cx="372" cy="138" r="1.8" fill="${p.spark}"/>
-      <circle cx="382" cy="148" r="2.2" fill="${p.sparkAlt}"/>
-      <circle cx="368" cy="158" r="1.8" fill="${p.spark}"/>
-      <circle cx="348" cy="138" r="1.6" fill="${p.spark}"/>
-      <circle cx="390" cy="142" r="1.4" fill="${p.sparkAlt}"/>
+      <path d="M 305,152 Q 345,138 410,144 Q 350,152 305,152 Z" fill="${p.slashTrail}"/>
+      <path d="M 300,150 Q 350,140 415,146" stroke="${p.slashGlow}" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
+      <path d="M 302,150 Q 350,140 413,146" stroke="${p.slashCore}" stroke-width="2" stroke-linecap="round" fill="none"/>
+      <!-- Cherry blossom impact spark petals -->
+      <ellipse cx="360" cy="138" rx="3.5" ry="2" fill="${p.sakura1}"/>
+      <ellipse cx="372" cy="148" rx="4" ry="2.2" fill="${p.sakura2}"/>
+      <circle cx="350" cy="146" r="2" fill="${p.sparkAlt}"/>
     </g>
   `;
 
+  // Attack 2: Diagonal Crescent Slice (at X = 650)
   const vfx2Svg = `
     <g class="vfx-2">
-      <path d="M 630,108 Q 668,138 706,168 Q 675,148 638,118 Z" fill="${p.slashTrail}"/>
-      <path d="M 628,106 Q 670,142 710,170" stroke="${p.slashGlow}" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
-      <path d="M 630,108 Q 670,142 708,168" stroke="${p.slashCore}" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-      <polygon points="670,130 673,141 684,144 673,147 670,158 667,147 656,144 667,141" fill="${p.slashCore}"/>
-      <circle cx="684" cy="134" r="2.2" fill="${p.spark}"/>
-      <circle cx="694" cy="152" r="2.5" fill="${p.sparkAlt}"/>
-      <circle cx="678" cy="162" r="1.8" fill="${p.spark}"/>
-      <circle cx="658" cy="124" r="1.6" fill="${p.sparkAlt}"/>
+      <path d="M 610,105 Q 648,136 686,168 Q 655,146 618,115 Z" fill="${p.slashTrail}"/>
+      <path d="M 608,103 Q 650,140 690,170" stroke="${p.slashGlow}" stroke-width="5.2" stroke-linecap="round" fill="none" opacity="0.9"/>
+      <path d="M 610,105 Q 650,140 688,168" stroke="${p.slashCore}" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+      <ellipse cx="660" cy="134" rx="4" ry="2" fill="${p.sakura1}"/>
+      <circle cx="672" cy="150" r="2.2" fill="${p.sparkAlt}"/>
+      <circle cx="640" cy="120" r="1.8" fill="${p.spark}"/>
     </g>
   `;
 
-  const vfx3Svg = `
-    <g class="vfx-3">
-      <path d="M 776,72 Q 798,120 790,172 Q 780,130 772,82 Z" fill="${p.slashTrail}"/>
-      <path d="M 774,70 Q 800,122 790,174" stroke="${p.slashGlow}" stroke-width="5.2" stroke-linecap="round" fill="none" opacity="0.95"/>
-      <path d="M 776,72 Q 798,122 790,172" stroke="${p.slashCore}" stroke-width="2.4" stroke-linecap="round" fill="none"/>
-      <ellipse cx="790" cy="170" rx="24" ry="4.5" stroke="${p.slashGlow}" stroke-width="2" fill="none" opacity="0.85"/>
-      <polygon points="790,132 793,143 804,146 793,149 790,160 787,149 776,146 787,143" fill="${p.slashCore}"/>
-      <circle cx="776" cy="130" r="2.4" fill="${p.spark}"/>
-      <circle cx="806" cy="134" r="2.4" fill="${p.sparkAlt}"/>
-      <circle cx="800" cy="160" r="2" fill="${p.spark}"/>
-      <circle cx="780" cy="162" r="1.8" fill="${p.sparkAlt}"/>
+  // Attack 3: CLIMACTIC BOSS EXECUTION: Sakura Iaijutsu Blossom Cleave (at X = 780)!
+  const vfxBossSvg = `
+    <g class="vfx-boss">
+      <!-- Massive Radiant Curved Slash Arc -->
+      <path d="M 750,65 Q 815,115 775,174 Q 760,125 745,80 Z" fill="${p.slashTrail}"/>
+      <path d="M 746,62 Q 820,118 775,176" stroke="${p.slashGlow}" stroke-width="6.5" stroke-linecap="round" fill="none" opacity="0.95"/>
+      <path d="M 748,64 Q 818,118 775,174" stroke="${p.slashCore}" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+      <!-- Dramatic Sakura Petal Blossom Explosion -->
+      <ellipse cx="780" cy="115" rx="5" ry="2.5" fill="${p.sakura1}"/>
+      <ellipse cx="795" cy="126" rx="4.5" ry="2.2" fill="${p.sakura2}"/>
+      <ellipse cx="765" cy="132" rx="4.8" ry="2.4" fill="${p.sakura1}"/>
+      <ellipse cx="805" cy="145" rx="5.2" ry="2.6" fill="${p.sakura2}"/>
+      <ellipse cx="760" cy="150" rx="4" ry="2" fill="${p.sakura1}"/>
+      <!-- Impact Shockwave Star -->
+      <polygon points="780,120 784,133 798,137 784,141 780,154 776,141 762,137 776,133" fill="${p.slashCore}"/>
+      <circle cx="780" cy="137" r="4" fill="${p.sparkAlt}"/>
     </g>
   `;
 
-  // 8. The Ninja Character Rig with:
-  // - 4-Frame Fluid Run Cycle
-  // - Acrobatic Jumping Forward Roll (Aerial Somersault)
-  // - Ground Combat Forward Roll (Floor Roll under barrier)
-  // - 3 Sword Combat Attacks
+  // 11. Shinobi Ronin Character Rig:
+  // Height: ~60px (2 rows).
+  // Features:
+  // - Traditional Ronin Straw Kasa / Shinobi Hood with glowing eye slit.
+  // - Flowing Haori coat ripples in the wind.
+  // - Crimson silk scarf ribbons.
+  // - Katana & wakizashi daisho.
+  // - 4-Frame Fluid Edo Sprint.
+  // - Acrobatic 360° Aerial Somersault Flip.
+  // - Ground 360° Combat Forward Roll.
+  // - Sword Slashes + Sword-sheathing Noto pose!
   const ninjaRigDef = `
     <g id="ninja-char">
-      <!-- POSE 1: FLUID RUN CYCLE (4 Stride Phases with Torso Bobbing) -->
+      <!-- POSE 1: EDO RONIN SPRINT (4-Frame Stride with Haori flutter & Torso Bob) -->
       <g class="pose-run">
         <g class="run-bob">
-          <!-- Shared Head & Flowing Scarf for all run phases -->
-          <path class="scarf-strand-1" d="M -9,-52 C -24,-45 -36,-62 -52,-56 C -36,-66 -22,-56 -9,-55 Z" fill="${p.scarf}"/>
-          <path class="scarf-strand-2" d="M -8,-49 C -20,-42 -28,-52 -42,-48 C -26,-55 -18,-48 -8,-51 Z" fill="${p.scarfLight}" opacity="0.85"/>
-          <polygon points="-8,-46 10,-44 7,-24 -9,-24" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
-          <polygon points="-7,-45 5,-44 3,-25 -8,-25" fill="${p.ninjaArmor}"/>
+          <!-- Flowing Crimson Silk Ribbon -->
+          <path class="scarf-strand-1" d="M -8,-52 C -24,-45 -38,-62 -54,-56 C -38,-66 -22,-56 -8,-55 Z" fill="${p.scarf}"/>
+          <path class="scarf-strand-2" d="M -7,-49 C -20,-42 -30,-52 -44,-48 C -28,-55 -18,-48 -7,-51 Z" fill="${p.scarfLight}" opacity="0.85"/>
+          <!-- Flowing Haori Coat -->
+          <path d="M -10,-46 C -18,-40 -24,-30 -22,-20 C -18,-24 -12,-30 -8,-36 Z" fill="${p.shinobiHaori}"/>
+          <!-- Torso & Hakama -->
+          <polygon points="-8,-46 10,-44 7,-24 -9,-24" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
+          <polygon points="-7,-45 5,-44 3,-25 -8,-25" fill="${p.shinobiArmor}"/>
           <rect x="-10" y="-27" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
-          <ellipse cx="2" cy="-53" rx="8" ry="8.5" fill="${p.ninjaHead}" stroke="${p.ninjaArmor}" stroke-width="1"/>
-          <rect x="-4" y="-57" width="13" height="3.5" rx="1" fill="${p.scarf}"/>
+          <!-- Ronin Head & Straw Kasa Hat -->
+          <ellipse cx="2" cy="-53" rx="7.5" ry="7.5" fill="${p.shinobiSuit}"/>
+          <!-- Conical / Angled Kasa Hat -->
+          <polygon points="-12,-55 16,-52 2,-62" fill="${p.shinobiKasa}"/>
           <polygon points="1,-53 9,-53 8,-51 0,-51" fill="${p.eye}"/>
-          <!-- Katana Sheathed at Hip/Back -->
+          <!-- Sheathed Katana Daisho -->
           <path d="M 1,-36 L -18,-24" stroke="${p.katanaGuard}" stroke-width="3" stroke-linecap="round"/>
           <path d="M -18,-24 L -36,-12" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
           <line x1="-18" y1="-24" x2="-36" y2="-12" stroke="${p.katanaEdge}" stroke-width="1"/>
 
           <!-- FRAME 1: Left Lead Contact Stride -->
           <g class="rf rf1">
-            <path d="M -3,-24 L 7,-14 L 16,0" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L -13,-14 L -18,-2" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L 11,-32 L 18,-24" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+            <path d="M -3,-24 L 7,-14 L 16,0" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L -13,-14 L -18,-2" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L 11,-32 L 18,-24" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
           </g>
 
           <!-- FRAME 2: Left Absorption / Passing Stride -->
           <g class="rf rf2">
-            <path d="M -3,-24 L 8,-12 L 11,0" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L -5,-12 L -2,-1" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L 8,-32 L 12,-22" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+            <path d="M -3,-24 L 8,-12 L 11,0" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L -5,-12 L -2,-1" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L 8,-32 L 12,-22" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
           </g>
 
           <!-- FRAME 3: Right Lead Contact Stride -->
           <g class="rf rf3">
-            <path d="M -3,-24 L -13,-14 L -18,-2" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L 7,-14 L 16,0" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L -6,-32 L -12,-24" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+            <path d="M -3,-24 L -13,-14 L -18,-2" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L 7,-14 L 16,0" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L -6,-32 L -12,-24" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
           </g>
 
           <!-- FRAME 4: Right Absorption / Passing Stride -->
           <g class="rf rf4">
-            <path d="M -3,-24 L -5,-12 L -2,-1" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L 8,-12 L 11,0" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L 4,-32 L 6,-22" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+            <path d="M -3,-24 L -5,-12 L -2,-1" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L 8,-12 L 11,0" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L 4,-32 L 6,-22" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
           </g>
         </g>
       </g>
 
-      <!-- POSE 2: JUMPING FORWARD ROLL (360° Acrobatic Aerial Somersault Flip over spikes) -->
+      <!-- POSE 2: JUMPING 360° AERIAL SOMERSAULT FLIP (over bamboo spikes) -->
       <g class="pose-jump">
         <g class="aerial-flip-spinner">
-          <!-- Circular wind vortex streak -->
           <circle cx="0" cy="-26" r="23" stroke="${p.slashGlow}" stroke-width="1.6" stroke-dasharray="28,14" fill="none" opacity="0.45"/>
-          <!-- Helical spinning scarf ribbons -->
           <path d="M -10,-34 C -26,-36 -32,-20 -28,-6 C -24,8 -8,4 -4,-2 C -12,2 -20,-10 -16,-24 Z" fill="${p.scarf}"/>
-          <path d="M -8,-32 C -20,-30 -24,-16 -20,-4 C -16,6 -4,2 0,-3" stroke="${p.scarfLight}" stroke-width="2" fill="none" opacity="0.85"/>
-          <!-- Curled somersault body core -->
-          <path d="M -13,-36 C -20,-24 -17,-10 -5,-4 C 8,-4 15,-12 13,-24 C 11,-36 1,-40 -13,-36 Z" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.4"/>
-          <!-- Tucked ninja head -->
-          <ellipse cx="-4" cy="-25" rx="7.5" ry="7.5" fill="${p.ninjaHead}"/>
+          <path d="M -13,-36 C -20,-24 -17,-10 -5,-4 C 8,-4 15,-12 13,-24 C 11,-36 1,-40 -13,-36 Z" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.4"/>
+          <ellipse cx="-4" cy="-25" rx="7.5" ry="7.5" fill="${p.shinobiSuit}"/>
           <polygon points="-7,-25 0,-25 -1,-23 -6,-23" fill="${p.eye}"/>
-          <!-- Tightly wrapped knees & legs tucked to chest -->
-          <path d="M -4,-6 C 7,-4 15,-10 11,-22 C 8,-12 2,-6 -4,-6 Z" fill="${p.ninjaArmor}"/>
-          <path d="M -6,-6 C 4,-4 11,-9 8,-19" stroke="${p.ninjaSuit}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
-          <!-- Katana curved along the back in spin -->
+          <path d="M -6,-6 C 4,-4 11,-9 8,-19" stroke="${p.shinobiSuit}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
           <path d="M -12,-38 C -4,-42 12,-34 22,-20" stroke="${p.katanaBlade}" stroke-width="2.6" stroke-linecap="round" fill="none"/>
-          <path d="M -12,-38 C -4,-42 12,-34 22,-20" stroke="${p.katanaEdge}" stroke-width="1.2" stroke-linecap="round" fill="none"/>
-          <circle cx="-12" cy="-38" r="2.5" fill="${p.katanaGuard}"/>
-          <!-- Tucked arms clasping knees -->
-          <path d="M -2,-28 L 6,-22 L 4,-14" stroke="${p.ninjaSuit}" stroke-width="4" stroke-linecap="round" fill="none"/>
+          <line x1="-12" y1="-38" x2="22" y2="-20" stroke="${p.katanaEdge}" stroke-width="1.2"/>
         </g>
       </g>
 
-      <!-- POSE 3: GROUND COMBAT FORWARD ROLL (360° Floor Roll under overhead barrier) -->
+      <!-- POSE 3: GROUND 360° COMBAT FORWARD ROLL (under Torii gate) -->
       <g class="pose-roll">
         <g class="ground-roll-spinner">
-          <!-- Floor spin speed ring -->
           <circle cx="0" cy="-13" r="14" stroke="${p.slashGlow}" stroke-width="1.4" stroke-dasharray="18,10" fill="none" opacity="0.4"/>
-          <!-- Scarf curled tight along body -->
           <path d="M -10,-19 C -18,-17 -22,-8 -18,-1 C -12,2 -4,0 0,-3" stroke="${p.scarf}" stroke-width="2.5" fill="none"/>
-          <!-- Compact rolling body ball (radius 13px, max height 26px!) -->
-          <path d="M -11,-21 C -16,-15 -15,-6 -5,-1 C 6,-1 13,-6 11,-14 C 9,-21 1,-25 -11,-21 Z" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.3"/>
-          <!-- Tucked head inside roll ball -->
-          <ellipse cx="-3" cy="-13" rx="6.5" ry="6.5" fill="${p.ninjaHead}"/>
+          <path d="M -11,-21 C -16,-15 -15,-6 -5,-1 C 6,-1 13,-6 11,-14 C 9,-21 1,-25 -11,-21 Z" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.3"/>
+          <ellipse cx="-3" cy="-13" rx="6.5" ry="6.5" fill="${p.shinobiSuit}"/>
           <polygon points="-6,-13 0,-13 -1,-11 -5,-11" fill="${p.eye}"/>
-          <!-- Tucked knees tucked into roll ball -->
-          <path d="M -4,-2 C 5,-1 11,-5 9,-13" stroke="${p.ninjaArmor}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
-          <path d="M -6,-2 C 3,-1 8,-4 6,-11" stroke="${p.ninjaSuit}" stroke-width="4" stroke-linecap="round" fill="none"/>
-          <!-- Katana parallel to roll core -->
+          <path d="M -6,-2 C 3,-1 8,-4 6,-11" stroke="${p.shinobiSuit}" stroke-width="4" stroke-linecap="round" fill="none"/>
           <path d="M -10,-20 L 14,-7" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
-          <line x1="-10" y1="-20" x2="14" y2="-7" stroke="${p.katanaEdge}" stroke-width="1"/>
-          <!-- Rolling floor contact friction sparks -->
-          <circle cx="5" cy="0" r="1.6" fill="${p.spark}"/>
+          <circle cx="5" cy="0" r="1.6" fill="${p.sakura1}"/>
           <circle cx="-6" cy="0" r="1.4" fill="${p.sparkAlt}"/>
         </g>
       </g>
 
-      <!-- POSE 4: HORIZONTAL SLASH (Aggressive forward lunge with straight horizontal blade) -->
+      <!-- POSE 4: HORIZONTAL IAI SLASH (Deep lunge against Bandit) -->
       <g class="pose-slash-h">
         <path d="M -16,-48 C -32,-52 -48,-46 -64,-50 C -48,-58 -32,-53 -16,-51 Z" fill="${p.scarf}"/>
-        <polygon points="-12,-44 10,-42 8,-21 -10,-21" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
+        <polygon points="-12,-44 10,-42 8,-21 -10,-21" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
         <rect x="-12" y="-25" width="21" height="5" rx="1.5" fill="${p.scarf}"/>
-        <ellipse cx="6" cy="-50" rx="8" ry="8" fill="${p.ninjaHead}"/>
+        <ellipse cx="6" cy="-50" rx="8" ry="8" fill="${p.shinobiSuit}"/>
         <polygon points="5,-50 13,-50 12,-48 4,-48" fill="${p.eye}"/>
-        <path d="M 6,-21 L 20,-10 L 28,0" stroke="${p.ninjaSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
-        <path d="M -10,-21 L -24,-12 L -34,0" stroke="${p.ninjaHead}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
+        <path d="M 6,-21 L 20,-10 L 28,0" stroke="${p.shinobiSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
+        <path d="M -10,-21 L -24,-12 L -34,0" stroke="${p.shinobiArmor}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
         <path d="M 8,-36 L 54,-33" stroke="${p.katanaBlade}" stroke-width="2.8" stroke-linecap="round"/>
         <line x1="8" y1="-36" x2="54" y2="-33" stroke="${p.katanaEdge}" stroke-width="1.4"/>
         <rect x="6" y="-39" width="3.5" height="6" rx="1" fill="${p.katanaGuard}"/>
-        <path d="M 4,-40 L 16,-36 L 10,-36" stroke="${p.ninjaSuit}" stroke-width="4.5" stroke-linecap="round"/>
       </g>
 
-      <!-- POSE 5: DIAGONAL SLICE (45-degree angle downward cutting strike) -->
+      <!-- POSE 5: DIAGONAL CRESCENT SLICE (against Assassin) -->
       <g class="pose-slash-d">
         <path d="M -12,-50 C -30,-58 -42,-50 -54,-54 C -40,-64 -26,-58 -12,-54 Z" fill="${p.scarf}"/>
-        <polygon points="-10,-44 10,-42 6,-21 -10,-21" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
+        <polygon points="-10,-44 10,-42 6,-21 -10,-21" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
         <rect x="-11" y="-26" width="20" height="5" rx="1.5" fill="${p.scarf}"/>
-        <ellipse cx="4" cy="-50" rx="8" ry="8" fill="${p.ninjaHead}"/>
+        <ellipse cx="4" cy="-50" rx="8" ry="8" fill="${p.shinobiSuit}"/>
         <polygon points="3,-50 11,-50 10,-48 2,-48" fill="${p.eye}"/>
-        <path d="M 6,-21 L 18,-8 L 22,0" stroke="${p.ninjaSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
-        <path d="M -10,-21 L -20,-10 L -26,0" stroke="${p.ninjaHead}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
+        <path d="M 6,-21 L 18,-8 L 22,0" stroke="${p.shinobiSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
+        <path d="M -10,-21 L -20,-10 L -26,0" stroke="${p.shinobiArmor}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
         <path d="M -3,-50 L 40,-12" stroke="${p.katanaBlade}" stroke-width="3" stroke-linecap="round"/>
         <line x1="-3" y1="-50" x2="40" y2="-12" stroke="${p.katanaEdge}" stroke-width="1.4"/>
-        <circle cx="0" cy="-47" r="2.6" fill="${p.katanaGuard}"/>
-        <path d="M 2,-40 L 16,-28" stroke="${p.ninjaSuit}" stroke-width="4.5" stroke-linecap="round"/>
       </g>
 
-      <!-- POSE 6: OVERHEAD CLEAVE (Two hands high, crashing straight down) -->
+      <!-- POSE 6: CLIMACTIC BOSS EXECUTION / BLADE SHEATHING (Noto pose) -->
       <g class="pose-slash-o">
         <path d="M -10,-46 C -26,-38 -38,-26 -48,-18 C -36,-28 -22,-40 -10,-48 Z" fill="${p.scarf}"/>
-        <polygon points="-10,-42 8,-40 6,-19 -10,-19" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
+        <!-- Dynamic low stance -->
+        <polygon points="-10,-42 8,-40 6,-19 -10,-19" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
         <rect x="-11" y="-24" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
-        <ellipse cx="3" cy="-47" rx="8" ry="8" fill="${p.ninjaHead}"/>
+        <ellipse cx="3" cy="-47" rx="8" ry="8" fill="${p.shinobiSuit}"/>
         <polygon points="2,-47 10,-47 9,-45 1,-45" fill="${p.eye}"/>
-        <path d="M 6,-19 L 14,-6 L 16,0" stroke="${p.ninjaSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
-        <path d="M -10,-19 L -18,-8 L -20,0" stroke="${p.ninjaHead}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <path d="M 14,-56 L 24,-2" stroke="${p.katanaBlade}" stroke-width="3.2" stroke-linecap="round"/>
-        <line x1="14" y1="-56" x2="24" y2="-2" stroke="${p.katanaEdge}" stroke-width="1.5"/>
+        <!-- Deep stance legs -->
+        <path d="M 6,-19 L 14,-6 L 16,0" stroke="${p.shinobiSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
+        <path d="M -10,-19 L -18,-8 L -20,0" stroke="${p.shinobiArmor}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
+        <!-- Katana brought down with two hands -->
+        <path d="M 14,-56 L 26,-2" stroke="${p.katanaBlade}" stroke-width="3.4" stroke-linecap="round"/>
+        <line x1="14" y1="-56" x2="26" y2="-2" stroke="${p.katanaEdge}" stroke-width="1.5"/>
         <circle cx="14" cy="-52" r="2.8" fill="${p.katanaGuard}"/>
-        <path d="M 2,-38 L 16,-50" stroke="${p.ninjaSuit}" stroke-width="4.5" stroke-linecap="round"/>
       </g>
     </g>
   `;
 
-  // 9. CSS Keyframes Generation
+  // 12. CSS Keyframes
   const ninjaKf = NINJA_TRAJECTORY.map(([time, x, y]) => {
     const pVal = pct(time);
     const ty = GROUND_Y + y;
@@ -589,7 +683,6 @@ function buildSvg(grid, theme) {
 
   const dur = `${T.toFixed(3)}s`;
 
-  // Explicit non-overlapping keyframe ranges for bulletproof pose switching
   const css = `
     /* Canvas base */
     .bg { fill: ${p.bg}; }
@@ -601,12 +694,12 @@ function buildSvg(grid, theme) {
     .ghost-1 {
       animation: ninjaTravel ${dur} linear infinite;
       animation-delay: -0.07s;
-      opacity: 0.3;
+      opacity: 0.32;
     }
     .ghost-2 {
       animation: ninjaTravel ${dur} linear infinite;
       animation-delay: -0.14s;
-      opacity: 0.15;
+      opacity: 0.16;
     }
     @keyframes ninjaTravel {
       ${ninjaKf}
@@ -621,50 +714,50 @@ function buildSvg(grid, theme) {
     .pose-slash-o { opacity: 0; animation: animSlashO ${dur} step-end infinite; }
 
     @keyframes animRun {
-      0%, 11.99% { opacity: 1; }
-      12.00%, 21.09% { opacity: 0; }
-      21.10%, 29.69% { opacity: 1; }
-      29.70%, 35.39% { opacity: 0; }
-      35.40%, 43.39% { opacity: 1; }
-      43.40%, 54.89% { opacity: 0; }
-      54.90%, 62.89% { opacity: 1; }
-      62.90%, 69.69% { opacity: 0; }
-      69.70%, 75.99% { opacity: 1; }
-      76.00%, 82.89% { opacity: 0; }
-      82.90%, 100% { opacity: 1; }
+      0%, 11.66% { opacity: 1; }
+      11.67%, 21.09% { opacity: 0; }
+      21.10%, 28.88% { opacity: 1; }
+      28.89%, 34.44% { opacity: 0; }
+      34.45%, 41.66% { opacity: 1; }
+      41.67%, 53.88% { opacity: 0; }
+      53.89%, 61.10% { opacity: 1; }
+      61.11%, 67.77% { opacity: 0; }
+      67.78%, 72.21% { opacity: 1; }
+      72.22%, 83.33% { opacity: 0; }
+      83.34%, 100% { opacity: 1; }
     }
 
     @keyframes animJump {
-      0%, 11.99% { opacity: 0; }
-      12.00%, 21.09% { opacity: 1; }
+      0%, 11.66% { opacity: 0; }
+      11.67%, 21.09% { opacity: 1; }
       21.10%, 100% { opacity: 0; }
     }
 
     @keyframes animRoll {
-      0%, 43.39% { opacity: 0; }
-      43.40%, 54.89% { opacity: 1; }
-      54.90%, 100% { opacity: 0; }
+      0%, 41.66% { opacity: 0; }
+      41.67%, 53.88% { opacity: 1; }
+      53.89%, 100% { opacity: 0; }
     }
 
     @keyframes animSlashH {
-      0%, 29.69% { opacity: 0; }
-      29.70%, 35.39% { opacity: 1; }
-      35.40%, 100% { opacity: 0; }
+      0%, 28.88% { opacity: 0; }
+      28.89%, 34.44% { opacity: 1; }
+      34.45%, 100% { opacity: 0; }
     }
 
     @keyframes animSlashD {
-      0%, 62.89% { opacity: 0; }
-      62.90%, 69.69% { opacity: 1; }
-      69.70%, 100% { opacity: 0; }
+      0%, 61.10% { opacity: 0; }
+      61.11%, 67.77% { opacity: 1; }
+      67.78%, 100% { opacity: 0; }
     }
 
     @keyframes animSlashO {
-      0%, 75.99% { opacity: 0; }
-      76.00%, 82.89% { opacity: 1; }
-      82.90%, 100% { opacity: 0; }
+      0%, 72.21% { opacity: 0; }
+      72.22%, 83.33% { opacity: 1; }
+      83.34%, 100% { opacity: 0; }
     }
 
-    /* Dynamic Run Mechanics: Torso Bob & 4-Frame Stride Cycle */
+    /* Edo Run Mechanics */
     .run-bob {
       animation: runBob 0.36s ease-in-out infinite;
     }
@@ -698,7 +791,7 @@ function buildSvg(grid, theme) {
       75.00%, 100% { opacity: 1; }
     }
 
-    /* Jumping Forward Roll: 360° Acrobatic Aerial Somersault Flip */
+    /* 360° Aerial Somersault Jump over bamboo stakes */
     .aerial-flip-spinner {
       transform-origin: 0px -26px;
       animation: animAerialSomersault ${dur} linear infinite;
@@ -708,7 +801,7 @@ function buildSvg(grid, theme) {
       ${pct(EVT.jumpFlipEnd)}%, 100% { transform: rotate(360deg); }
     }
 
-    /* Ground Combat Forward Roll: 360° Roll under overhead barrier */
+    /* 360° Ground Combat Roll under Torii Gate */
     .ground-roll-spinner {
       transform-origin: 0px -13px;
       animation: animGroundRoll ${dur} linear infinite;
@@ -718,102 +811,121 @@ function buildSvg(grid, theme) {
       ${pct(EVT.rollSpinEnd)}%, 100% { transform: rotate(360deg); }
     }
 
-    /* Attack 1 VFX and Enemy 1 reaction (X = 360) */
+    /* Attack 1 VFX and Bandit reaction (X = 350) */
     .vfx-1 { opacity: 0; animation: animVfx1 ${dur} ease-out infinite; }
     @keyframes animVfx1 {
-      0%, 31.39% { opacity: 0; }
-      31.40% { opacity: 1; transform: scale(1.05); }
-      33.50% { opacity: 0; transform: scale(1); }
+      0%, 30.29% { opacity: 0; }
+      30.30% { opacity: 1; }
+      32.50% { opacity: 0; }
       100% { opacity: 0; }
     }
     .e1-top {
-      transform-origin: 360px 148px;
+      transform-origin: 350px 147px;
       animation: animE1Top ${dur} ease-out infinite;
     }
     .e1-bot {
-      transform-origin: 360px 149px;
+      transform-origin: 350px 148px;
       animation: animE1Bot ${dur} ease-out infinite;
     }
     @keyframes animE1Top {
-      0%, 31.99% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      34.50% { opacity: 0; transform: translate(22px, -14px) rotate(32deg) scale(0.4); }
-      94.79% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
-      97.00%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+      0%, 30.55% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+      33.00% { opacity: 0; transform: translate(24px, -14px) rotate(35deg) scale(0.3); }
+      95.55% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
+      97.50%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
     }
     @keyframes animE1Bot {
-      0%, 31.99% { opacity: 1; transform: translate(0, 0); }
-      34.50% { opacity: 0; transform: translate(-10px, 12px) scale(0.4); }
-      94.79% { opacity: 0; transform: translate(0, 0); }
-      97.00%, 100% { opacity: 1; transform: translate(0, 0); }
+      0%, 30.55% { opacity: 1; transform: translate(0, 0); }
+      33.00% { opacity: 0; transform: translate(-10px, 12px) scale(0.3); }
+      95.55% { opacity: 0; transform: translate(0, 0); }
+      97.50%, 100% { opacity: 1; transform: translate(0, 0); }
     }
 
-    /* Attack 2 VFX and Enemy 2 reaction (X = 670) */
+    /* Attack 2 VFX and Assassin reaction (X = 650) */
     .vfx-2 { opacity: 0; animation: animVfx2 ${dur} ease-out infinite; }
     @keyframes animVfx2 {
-      0%, 65.39% { opacity: 0; }
-      65.40% { opacity: 1; }
-      67.50% { opacity: 0; }
+      0%, 62.49% { opacity: 0; }
+      62.50% { opacity: 1; }
+      64.60% { opacity: 0; }
       100% { opacity: 0; }
     }
     .e2-top {
-      transform-origin: 670px 145px;
+      transform-origin: 650px 145px;
       animation: animE2Top ${dur} ease-out infinite;
     }
     .e2-bot {
-      transform-origin: 670px 145px;
+      transform-origin: 650px 145px;
       animation: animE2Bot ${dur} ease-out infinite;
     }
     @keyframes animE2Top {
-      0%, 65.69% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      68.20% { opacity: 0; transform: translate(24px, -16px) rotate(40deg) scale(0.4); }
-      94.79% { opacity: 0; transform: translate(0, 0); }
-      97.00%, 100% { opacity: 1; transform: translate(0, 0); }
+      0%, 62.77% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+      65.20% { opacity: 0; transform: translate(24px, -16px) rotate(40deg) scale(0.3); }
+      95.55% { opacity: 0; transform: translate(0, 0); }
+      97.50%, 100% { opacity: 1; transform: translate(0, 0); }
     }
     @keyframes animE2Bot {
-      0%, 65.69% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      68.20% { opacity: 0; transform: translate(-14px, 14px) rotate(-24deg) scale(0.4); }
-      94.79% { opacity: 0; transform: translate(0, 0); }
-      97.00%, 100% { opacity: 1; transform: translate(0, 0); }
+      0%, 62.77% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+      65.20% { opacity: 0; transform: translate(-14px, 14px) rotate(-24deg) scale(0.3); }
+      95.55% { opacity: 0; transform: translate(0, 0); }
+      97.50%, 100% { opacity: 1; transform: translate(0, 0); }
     }
 
-    /* Attack 3 VFX and Enemy 3 reaction (X = 790) */
-    .vfx-3 { opacity: 0; animation: animVfx3 ${dur} ease-out infinite; }
-    @keyframes animVfx3 {
-      0%, 78.79% { opacity: 0; }
-      78.80% { opacity: 1; }
-      80.90% { opacity: 0; }
+    /* CLIMACTIC MINI-BOSS BATTLE: Demon Oni Warlord (X = 780) */
+    .vfx-boss { opacity: 0; animation: animVfxBoss ${dur} ease-out infinite; }
+    @keyframes animVfxBoss {
+      0%, 74.89% { opacity: 0; }
+      74.90% { opacity: 1; }
+      78.00% { opacity: 0; }
       100% { opacity: 0; }
     }
-    .e3-left {
-      transform-origin: 780px 144px;
-      animation: animE3Left ${dur} ease-out infinite;
+    .boss-left {
+      transform-origin: 770px 140px;
+      animation: animBossLeft ${dur} ease-out infinite;
     }
-    .e3-right {
-      transform-origin: 800px 144px;
-      animation: animE3Right ${dur} ease-out infinite;
+    .boss-right {
+      transform-origin: 790px 140px;
+      animation: animBossRight ${dur} ease-out infinite;
     }
-    @keyframes animE3Left {
-      0%, 78.79% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      81.30% { opacity: 0; transform: translate(-20px, 12px) rotate(-35deg) scale(0.4); }
-      94.79% { opacity: 0; transform: translate(0, 0); }
-      97.00%, 100% { opacity: 1; transform: translate(0, 0); }
+    @keyframes animBossLeft {
+      0%, 75.20% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+      78.50% { opacity: 0; transform: translate(-28px, -18px) rotate(-45deg) scale(0.2); }
+      95.55% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
+      97.50%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
     }
-    @keyframes animE3Right {
-      0%, 78.79% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      81.30% { opacity: 0; transform: translate(20px, 12px) rotate(35deg) scale(0.4); }
-      94.79% { opacity: 0; transform: translate(0, 0); }
-      97.00%, 100% { opacity: 1; transform: translate(0, 0); }
+    @keyframes animBossRight {
+      0%, 75.20% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+      78.50% { opacity: 0; transform: translate(28px, -18px) rotate(45deg) scale(0.2); }
+      95.55% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
+      97.50%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
     }
 
-    /* Micro-animations: fluttering scarf during run */
+    /* Drifting Sakura Petals Wind Animation */
+    .sakura {
+      animation: sakuraFloat 6s ease-in-out infinite;
+    }
+    .s1 { animation-delay: 0.0s; }
+    .s2 { animation-delay: 1.2s; }
+    .s3 { animation-delay: 2.5s; }
+    .s4 { animation-delay: 3.8s; }
+    .s5 { animation-delay: 4.9s; }
+    .s6 { animation-delay: 0.7s; }
+    .s7 { animation-delay: 2.1s; }
+    .s8 { animation-delay: 3.4s; }
+    .s9 { animation-delay: 4.3s; }
+    @keyframes sakuraFloat {
+      0% { transform: translate(0, 0) rotate(0deg); opacity: 0.8; }
+      50% { transform: translate(35px, 12px) rotate(120deg); opacity: 0.95; }
+      100% { transform: translate(70px, 24px) rotate(240deg); opacity: 0.6; }
+    }
+
+    /* Crimson Scarf Ribbon Flutter */
     .scarf-strand-1 {
       animation: scarfFlutter 0.45s ease-in-out infinite alternate;
-      transform-origin: -9px -52px;
+      transform-origin: -8px -52px;
     }
     .scarf-strand-2 {
       animation: scarfFlutter 0.45s ease-in-out infinite alternate;
       animation-delay: -0.2s;
-      transform-origin: -8px -49px;
+      transform-origin: -7px -49px;
     }
     @keyframes scarfFlutter {
       0% { transform: rotate(-3deg) scaleY(0.9); }
@@ -822,50 +934,54 @@ function buildSvg(grid, theme) {
 
     /* Reduced motion accessibility */
     @media (prefers-reduced-motion: reduce) {
-      #ninja-carrier, .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-3,
-      .e1-top, .e1-bot, .e2-top, .e2-bot, .e3-left, .e3-right,
-      .aerial-flip-spinner, .ground-roll-spinner, .run-bob {
+      #ninja-carrier, .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-boss,
+      .e1-top, .e1-bot, .e2-top, .e2-bot, .boss-left, .boss-right,
+      .aerial-flip-spinner, .ground-roll-spinner, .run-bob, .sakura {
         animation: none !important;
       }
-      .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-3 { display: none; }
-      #ninja-carrier { transform: translate(360px, ${GROUND_Y}px); }
+      .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-boss { display: none; }
+      #ninja-carrier { transform: translate(350px, ${GROUND_Y}px); }
     }
   `;
 
-  // 10. Assemble full SVG document
+  // 13. Assemble complete SVG document
   return `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="Cinematic shadow ninja journey across 5-row combat grid">
-      <title>Cinematic Shadow Ninja — 5-Row Action Sequence</title>
+    <svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="Feudal Edo Shinobi Moonlit Journey with Oni Mini-Boss">
+      <title>Edo Shinobi — Moonlit Bamboo Journey and Demon Oni Mini-Boss</title>
       <style><![CDATA[
 ${css}
       ]]></style>
       <defs>
         ${ninjaRigDef}
       </defs>
-      <!-- Background canvas -->
+      <!-- Deep Sky & Glowing Full Moon -->
       <rect width="${WIDTH}" height="${HEIGHT}" class="bg"/>
-      <!-- 5-Row Lanes -->
+      ${skyBackground}
+      <!-- 5 Traditional Movement Lanes -->
       ${lanesSvg}
-      <!-- Lane guide markers -->
+      <!-- Kanji Lane Guide Markers -->
       ${laneMarkers}
-      <!-- 5-Row Matrix Cells -->
+      <!-- Drifting Sakura Petals -->
+      ${sakuraSvg}
+      <!-- 5-Row Jade & Moss Stone Seals -->
       ${cellsSvg}
-      <!-- Ground Platform Rail -->
+      <!-- Wooden Bridge Pathway -->
       ${railSvg}
-      <!-- Obstacles and Enemies in world space -->
+      <!-- Obstacles: Bamboo Stakes & Torii Gate -->
       ${spikeSvg}
-      ${barrierSvg}
+      ${toriiSvg}
+      <!-- Regular Enemies & Demon Oni Mini-Boss -->
       ${enemy1Svg}
       ${enemy2Svg}
-      ${enemy3Svg}
-      <!-- Attack VFX -->
+      ${bossSvg}
+      <!-- Calligraphic Slashes & Boss Sakura Burst -->
       ${vfx1Svg}
       ${vfx2Svg}
-      ${vfx3Svg}
-      <!-- Cinematic Ghost Shadow Clones (After-images) -->
-      <use class="ghost-2" href="#ninja-char"/>
-      <use class="ghost-1" href="#ninja-char"/>
-      <!-- Ninja Character Carrier -->
+      ${vfxBossSvg}
+      <!-- Shadow Clones (After-images) -->
+      <g class="ghost-2"><use href="#ninja-char"/></g>
+      <g class="ghost-1"><use href="#ninja-char"/></g>
+      <!-- Shinobi Ronin Carrier -->
       <g id="ninja-carrier">
         <use href="#ninja-char"/>
       </g>
@@ -874,7 +990,7 @@ ${css}
 }
 
 // ---------- execution ----------
-console.log(`Generating Cinematic Ninja Animation for user: "${user}"...`);
+console.log(`Generating Feudal Edo Shinobi Animation with Demon Oni Mini-Boss for user: "${user}"...`);
 const grid = await fetchContributions(user);
 mkdirSync(outDir, { recursive: true });
 
