@@ -159,27 +159,33 @@ const PALETTES = {
 async function fetchContributions(login) {
   const fallback = generateFallbackGrid();
   if (!login) return fallback;
-  const url = `https://github.com/users/${login}/contributions`;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const res = await fetch(url, {
-        headers: { "user-agent": "ninja-profile-generator" },
-        signal: AbortSignal.timeout(4000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const html = await res.text();
-      const tags = html.match(/<td[^>]*ContributionCalendar-day[^>]*>/g) || [];
-      const cells = [];
-      for (const tag of tags) {
-        const level = /data-level="(\d)"/.exec(tag)?.[1];
-        if (level !== undefined) cells.push(Number(level));
-      }
-      if (cells.length > 50) {
-        return mapToFiveRows(cells);
-      }
-    } catch {
-      // Continue to next attempt or fallback
+  const url = `https://github.com/users/${encodeURIComponent(login)}/contributions`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    try { controller.abort(); } catch {}
+  }, 3500);
+
+  try {
+    const res = await fetch(url, {
+      headers: { "user-agent": "ninja-profile-generator" },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    const tags = html.match(/<td[^>]*ContributionCalendar-day[^>]*>/g) || [];
+    const cells = [];
+    for (const tag of tags) {
+      const level = /data-level="(\d)"/.exec(tag)?.[1];
+      if (level !== undefined) cells.push(Number(level));
     }
+    if (cells.length > 50) {
+      return mapToFiveRows(cells);
+    }
+  } catch {
+    // Return graceful fallback grid on any network error/timeout
+  } finally {
+    clearTimeout(timer);
   }
   return fallback;
 }
@@ -990,13 +996,20 @@ ${css}
 }
 
 // ---------- execution ----------
-console.log(`Generating Feudal Edo Shinobi Animation with Demon Oni Mini-Boss for user: "${user}"...`);
-const grid = await fetchContributions(user);
-mkdirSync(outDir, { recursive: true });
+async function main() {
+  console.log(`Generating Feudal Edo Shinobi Animation with Demon Oni Mini-Boss for user: "${user}"...`);
+  const grid = await fetchContributions(user);
+  mkdirSync(outDir, { recursive: true });
 
-for (const theme of ["dark", "light"]) {
-  const svg = buildSvg(grid, theme);
-  const file = join(outDir, `ninja-${theme}.svg`);
-  writeFileSync(file, svg, "utf-8");
-  console.log(`✓ Wrote ${file} (${(svg.length / 1024).toFixed(1)} KB, 5 rows, ${T.toFixed(1)}s loop)`);
+  for (const theme of ["dark", "light"]) {
+    const svg = buildSvg(grid, theme);
+    const file = join(outDir, `ninja-${theme}.svg`);
+    writeFileSync(file, svg, "utf-8");
+    console.log(`✓ Wrote ${file} (${(svg.length / 1024).toFixed(1)} KB, 5 rows, ${T.toFixed(1)}s loop)`);
+  }
 }
+
+main().catch((err) => {
+  console.error("Fatal error generating animation:", err);
+  process.exit(1);
+});
