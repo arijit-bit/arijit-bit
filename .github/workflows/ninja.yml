@@ -2,10 +2,11 @@ name: Generate Ninja Animation
 
 on:
   schedule:
-    - cron: "0 0 * * 1"
-  workflow_dispatch:
+    - cron: "0 0 * * *"      # Refresh daily at midnight UTC
+  workflow_dispatch:          # Run manually from Actions tab
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - ".github/scripts/ninja.mjs"
       - ".github/workflows/ninja.yml"
@@ -13,22 +14,31 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Build SVG animation
-        run: node .github/scripts/ninja.mjs dist
-      - name: Publish changed animation
+
+      - name: Generate Ninja Animation SVGs
+        run: node .github/scripts/ninja.mjs "${{ github.repository_owner }}" dist
+
+      - name: Push to output branch
         uses: crazy-max/ghaction-github-pages@v4
         with:
           target_branch: output
           build_dir: dist
+          commit_message: "chore: update ninja profile animation [skip ci]"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

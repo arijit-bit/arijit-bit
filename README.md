@@ -23,9 +23,9 @@
   <img src="https://streak-stats.demolab.com/?user=arijit-bit&background=0d1117&hide_border=true&stroke=0d1117&ring=A9B1D6&fire=A9B1D6&currStreakLabel=718096&currStreakNum=A9B1D6&sideNums=A9B1D6&sideLabels=718096&dates=718096" alt="GitHub Streak" />
   <br/><br/>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/arijit-bit/arijit-bit/output/github-contribution-grid-snake-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/arijit-bit/arijit-bit/output/github-contribution-grid-snake.svg">
-    <img alt="GitHub contribution grid snake animation" src="https://raw.githubusercontent.com/arijit-bit/arijit-bit/output/github-contribution-grid-snake-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/arijit-bit/arijit-bit/output/ninja-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/arijit-bit/arijit-bit/output/ninja-light.svg">
+    <img alt="Shadow ninja slicing through my contribution grid" src="https://raw.githubusercontent.com/arijit-bit/arijit-bit/output/ninja-dark.svg">
   </picture>
 </div>
 
