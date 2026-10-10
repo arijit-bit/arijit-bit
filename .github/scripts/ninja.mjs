@@ -5,7 +5,9 @@
 // - Exactly 5 movement rows / lanes (L1 to L5).
 // - Ninja visual height spans approximately 2 rows (~60px tall).
 // - Smooth continuous left-to-right cinematic progression.
-// - Natural running cycle, parabolic jump over low spikes, low slide under overhead barrier.
+// - Natural 4-frame running cycle with athletic stride and vertical bobbing.
+// - Acrobatic jumping forward roll (full 360° aerial somersault flip) over low spikes.
+// - Ground combat forward roll (full 360° roll along floor, height 26px) under overhead barrier.
 // - 3 distinct blade sword attacks: Horizontal Slash, Diagonal Slice, and Overhead Cleave.
 // - Dynamic blade trails, slash arcs, impact star flashes, directional sparks.
 // - Enemies visibly split/react, shatter into particles, and respawn.
@@ -187,9 +189,11 @@ const pct = (s) => ((s / T) * 100).toFixed(3);
 // Timing benchmarks (seconds):
 const EVT = {
   enter: 0.0,
-  // Jump over low spikes (spikes at X = 220)
+  // Jumping forward roll (somersault flip over spikes at X = 220)
   jumpStart: 2.1,
+  jumpFlipStart: 2.3,
   jumpApex: 2.8,
+  jumpFlipEnd: 3.3,
   jumpLand: 3.5,
   jumpRecover: 3.8,
   // Enemy 1 Horizontal Slash (enemy at X = 360)
@@ -197,11 +201,13 @@ const EVT = {
   e1Windup: 5.3,
   e1Hit: 5.6,
   e1Recover: 6.2,
-  // Overhead Barrier Crouch Slide (girder at X = 540)
-  slideStart: 7.6,
-  slideUnder: 8.5,
-  slideEnd: 9.4,
-  slideRecover: 9.8,
+  // Ground Combat Roll (rolling forward under overhead barrier at X = 540)
+  rollStart: 7.6,
+  rollSpinStart: 7.9,
+  rollUnder: 8.5,
+  rollSpinEnd: 9.1,
+  rollEnd: 9.4,
+  rollRecover: 9.8,
   // Enemy 2 Diagonal Slice (enemy at X = 670)
   e2Approach: 10.9,
   e2Windup: 11.2,
@@ -224,21 +230,21 @@ const NINJA_TRAJECTORY = [
   [0.0, -80, 0],
   [1.0, 30, 0],
   [EVT.jumpStart - 0.2, 160, 0],
-  [EVT.jumpStart, 180, 3], // Anticipation crouch before jump
-  [EVT.jumpStart + 0.35, 200, -36], // Rising
-  [EVT.jumpApex, 220, -52], // Apex soaring over spikes at X=220 (clearing 24px spikes)
-  [EVT.jumpApex + 0.35, 240, -32], // Falling
-  [EVT.jumpLand, 260, 3], // Landing cushion
+  [EVT.jumpStart, 180, 2], // Anticipation crouch before leap
+  [EVT.jumpStart + 0.35, 200, -36], // Rising into flip
+  [EVT.jumpApex, 220, -52], // Somresault apex over spikes at X=220
+  [EVT.jumpApex + 0.35, 240, -32], // Falling from flip
+  [EVT.jumpLand, 260, 2], // Landing absorption
   [EVT.jumpRecover, 280, 0], // Rebounded back to run
   [EVT.e1Windup, 330, 0], // Windup before slash
   [EVT.e1Hit, 360, 0], // Slash impact at X=360
   [EVT.e1Recover, 385, 0], // Recovery
   [7.0, 470, 0], // Smooth run section
-  [EVT.slideStart, 505, 0], // Dropping into low slide
-  [EVT.slideUnder - 0.4, 530, 0], // Sliding cleanly under barrier
-  [EVT.slideUnder + 0.4, 555, 0],
-  [EVT.slideEnd, 580, 0], // Emerging from slide
-  [EVT.slideRecover, 600, 0], // Standing back up
+  [EVT.rollStart, 505, 0], // Diving into forward ground roll
+  [EVT.rollUnder - 0.4, 530, 0], // Rolling cleanly under barrier
+  [EVT.rollUnder + 0.4, 555, 0],
+  [EVT.rollEnd, 580, 0], // Rolling out onto one knee
+  [EVT.rollRecover, 600, 0], // Standing back up into sprint
   [EVT.e2Windup, 645, 0], // Sword drawn high
   [EVT.e2Hit, 670, 0], // Diagonal strike impact
   [EVT.e2Recover, 695, 0], // Recovery
@@ -296,7 +302,6 @@ function buildSvg(grid, theme) {
   `;
 
   // 4. Low Obstacle: Ground Spikes at X = 220 (Row 5)
-  // Height = 24px, from y=146 to 170. Ninja leaps high to clear this.
   const spikeX = 220;
   const spikeSvg = `
     <g id="low-obstacle-spikes">
@@ -314,8 +319,6 @@ function buildSvg(grid, theme) {
   `;
 
   // 5. Overhead Barrier: Suspended Laser Girder at X = 540 (Rows 1-3)
-  // Hangs down from ceiling (y=10) to y=134. Clearance at bottom = 36px.
-  // Ninja standing is 60px tall, so must crouch/slide (20px tall) to pass under!
   const barrierX = 540;
   const barrierSvg = `
     <g id="overhead-barrier">
@@ -336,9 +339,6 @@ function buildSvg(grid, theme) {
   `;
 
   // 6. Enemies & Combat Encounters:
-  // Enemy 1: Ground Cyber Sentry at X = 360 (Sliced horizontally)
-  // Enemy 2: Armored Ronin at X = 670 (Sliced diagonally)
-  // Enemy 3: Floating Drone Sentinel at X = 790 (Sliced overhead)
   const enemy1Svg = `
     <g id="enemy-1" class="e1-group">
       <!-- Top half -->
@@ -389,17 +389,12 @@ function buildSvg(grid, theme) {
   `;
 
   // 7. Attack Effects (Slash Arcs, Blade Trails, Impact Sparks)
-  // Attack 1: Horizontal Slash Arc & Sparks at X = 360
   const vfx1Svg = `
     <g class="vfx-1">
-      <!-- Dynamic Blade Slash Trail Ribbon -->
       <path d="M 310,152 Q 355,140 420,145 Q 360,152 310,152 Z" fill="${p.slashTrail}"/>
-      <!-- Sharp Glowing Arc -->
       <path d="M 305,150 Q 360,142 425,147" stroke="${p.slashGlow}" stroke-width="4.8" stroke-linecap="round" fill="none" opacity="0.85"/>
       <path d="M 307,150 Q 360,142 423,147" stroke="${p.slashCore}" stroke-width="2" stroke-linecap="round" fill="none"/>
-      <!-- Impact Star Burst -->
       <polygon points="360,135 362,145 372,147 362,149 360,159 358,149 348,147 358,145" fill="${p.slashCore}"/>
-      <!-- Radiating Sparks -->
       <circle cx="372" cy="138" r="1.8" fill="${p.spark}"/>
       <circle cx="382" cy="148" r="2.2" fill="${p.sparkAlt}"/>
       <circle cx="368" cy="158" r="1.8" fill="${p.spark}"/>
@@ -408,17 +403,12 @@ function buildSvg(grid, theme) {
     </g>
   `;
 
-  // Attack 2: Diagonal Slice Arc & Sparks at X = 670 (45° angle)
   const vfx2Svg = `
     <g class="vfx-2">
-      <!-- Diagonal Trail Ribbon -->
       <path d="M 630,108 Q 668,138 706,168 Q 675,148 638,118 Z" fill="${p.slashTrail}"/>
-      <!-- Sharp Diagonal Arc -->
       <path d="M 628,106 Q 670,142 710,170" stroke="${p.slashGlow}" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
       <path d="M 630,108 Q 670,142 708,168" stroke="${p.slashCore}" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-      <!-- Impact Star -->
       <polygon points="670,130 673,141 684,144 673,147 670,158 667,147 656,144 667,141" fill="${p.slashCore}"/>
-      <!-- Diagonal Sparks Spray -->
       <circle cx="684" cy="134" r="2.2" fill="${p.spark}"/>
       <circle cx="694" cy="152" r="2.5" fill="${p.sparkAlt}"/>
       <circle cx="678" cy="162" r="1.8" fill="${p.spark}"/>
@@ -426,17 +416,12 @@ function buildSvg(grid, theme) {
     </g>
   `;
 
-  // Attack 3: Overhead Cleave Arc & Shockwave at X = 790
   const vfx3Svg = `
     <g class="vfx-3">
-      <!-- Overhead Curved Trail Ribbon -->
       <path d="M 776,72 Q 798,120 790,172 Q 780,130 772,82 Z" fill="${p.slashTrail}"/>
-      <!-- Vertical Downward Crescent Arc -->
       <path d="M 774,70 Q 800,122 790,174" stroke="${p.slashGlow}" stroke-width="5.2" stroke-linecap="round" fill="none" opacity="0.95"/>
       <path d="M 776,72 Q 798,122 790,172" stroke="${p.slashCore}" stroke-width="2.4" stroke-linecap="round" fill="none"/>
-      <!-- Ground Impact Shockwave -->
       <ellipse cx="790" cy="170" rx="24" ry="4.5" stroke="${p.slashGlow}" stroke-width="2" fill="none" opacity="0.85"/>
-      <!-- Impact Star & Sparks -->
       <polygon points="790,132 793,143 804,146 793,149 790,160 787,149 776,146 787,143" fill="${p.slashCore}"/>
       <circle cx="776" cy="130" r="2.4" fill="${p.spark}"/>
       <circle cx="806" cy="134" r="2.4" fill="${p.sparkAlt}"/>
@@ -445,118 +430,133 @@ function buildSvg(grid, theme) {
     </g>
   `;
 
-  // 8. The Ninja Character Rig:
-  // Standing Height = 60px (spanning ~2 rows: feet at y=0, head at y=-60).
+  // 8. The Ninja Character Rig with:
+  // - 4-Frame Fluid Run Cycle
+  // - Acrobatic Jumping Forward Roll (Aerial Somersault)
+  // - Ground Combat Forward Roll (Floor Roll under barrier)
+  // - 3 Sword Combat Attacks
   const ninjaRigDef = `
     <g id="ninja-char">
-      <!-- POSE 1: RUNNING (Cycles smoothly during run phases) -->
+      <!-- POSE 1: FLUID RUN CYCLE (4 Stride Phases with Torso Bobbing) -->
       <g class="pose-run">
-        <!-- Flowing animated scarf ribbons -->
-        <path class="scarf-strand-1" d="M -9,-52 C -24,-45 -36,-62 -52,-56 C -36,-66 -22,-56 -9,-55 Z" fill="${p.scarf}"/>
-        <path class="scarf-strand-2" d="M -8,-49 C -20,-42 -28,-52 -42,-48 C -26,-55 -18,-48 -8,-51 Z" fill="${p.scarfLight}" opacity="0.85"/>
-        <!-- Torso & Shinobi Tunic -->
-        <polygon points="-8,-46 10,-44 7,-24 -9,-24" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
-        <polygon points="-7,-45 5,-44 3,-25 -8,-25" fill="${p.ninjaArmor}"/>
-        <!-- Obi Sash / Belt -->
-        <rect x="-10" y="-27" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
-        <!-- Shinobi Head & Cowl -->
-        <ellipse cx="2" cy="-53" rx="8" ry="8.5" fill="${p.ninjaHead}" stroke="${p.ninjaArmor}" stroke-width="1"/>
-        <!-- Forehead protector plate -->
-        <rect x="-4" y="-57" width="13" height="3.5" rx="1" fill="${p.scarf}"/>
-        <!-- Glowing eye slit -->
-        <polygon points="1,-53 9,-53 8,-51 0,-51" fill="${p.eye}"/>
-        <!-- Running Legs: Left Leg (Forward drive) -->
-        <path class="leg-l" d="M -3,-24 L 6,-13 L 14,0" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <!-- Running Legs: Right Leg (Back stride) -->
-        <path class="leg-r" d="M -4,-24 L -12,-13 L -16,-1" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <!-- Katana Sheathed / Held Angled Behind -->
-        <path d="M 1,-36 L -18,-24" stroke="${p.katanaGuard}" stroke-width="3" stroke-linecap="round"/>
-        <path d="M -18,-24 L -36,-12" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
-        <line x1="-18" y1="-24" x2="-36" y2="-12" stroke="${p.katanaEdge}" stroke-width="1"/>
-        <!-- Pumping Arms -->
-        <path class="arm-f" d="M 2,-42 L 10,-32 L 16,-24" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
-      </g>
-
-      <!-- POSE 2: JUMP (Tucked acrobatic leap, height 36px, clearing ground spikes) -->
-      <g class="pose-jump">
-        <!-- Streaming downward scarf ribbons -->
-        <path d="M -7,-48 C -24,-40 -36,-26 -46,-14 C -34,-26 -16,-40 -7,-50 Z" fill="${p.scarf}"/>
-        <path d="M -6,-45 C -20,-32 -30,-18 -38,-6 C -28,-18 -14,-36 -6,-47 Z" fill="${p.scarfLight}" opacity="0.85"/>
-        <!-- Tilted ninja body -->
-        <g transform="rotate(20, 0, -32)">
+        <g class="run-bob">
+          <!-- Shared Head & Flowing Scarf for all run phases -->
+          <path class="scarf-strand-1" d="M -9,-52 C -24,-45 -36,-62 -52,-56 C -36,-66 -22,-56 -9,-55 Z" fill="${p.scarf}"/>
+          <path class="scarf-strand-2" d="M -8,-49 C -20,-42 -28,-52 -42,-48 C -26,-55 -18,-48 -8,-51 Z" fill="${p.scarfLight}" opacity="0.85"/>
           <polygon points="-8,-46 10,-44 7,-24 -9,-24" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
+          <polygon points="-7,-45 5,-44 3,-25 -8,-25" fill="${p.ninjaArmor}"/>
           <rect x="-10" y="-27" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
-          <ellipse cx="2" cy="-53" rx="8" ry="8.5" fill="${p.ninjaHead}"/>
+          <ellipse cx="2" cy="-53" rx="8" ry="8.5" fill="${p.ninjaHead}" stroke="${p.ninjaArmor}" stroke-width="1"/>
           <rect x="-4" y="-57" width="13" height="3.5" rx="1" fill="${p.scarf}"/>
           <polygon points="1,-53 9,-53 8,-51 0,-51" fill="${p.eye}"/>
-          <!-- Tucked Legs (tightly drawn toward chest, clearing 24px spikes!) -->
-          <path d="M -3,-24 L 10,-19 L 5,-8" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" fill="none"/>
-          <path d="M -5,-24 L -11,-15 L -5,-8" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
-          <!-- Katana poised in mid-air -->
-          <path d="M 5,-38 L 26,-24" stroke="${p.katanaBlade}" stroke-width="2.4" stroke-linecap="round"/>
-          <line x1="5" y1="-38" x2="26" y2="-24" stroke="${p.katanaEdge}" stroke-width="1.2"/>
-          <rect x="4" y="-40" width="3.5" height="5.5" rx="1" fill="${p.katanaGuard}"/>
-          <!-- Reaching Arms -->
-          <path d="M 2,-40 L 14,-28" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round"/>
+          <!-- Katana Sheathed at Hip/Back -->
+          <path d="M 1,-36 L -18,-24" stroke="${p.katanaGuard}" stroke-width="3" stroke-linecap="round"/>
+          <path d="M -18,-24 L -36,-12" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
+          <line x1="-18" y1="-24" x2="-36" y2="-12" stroke="${p.katanaEdge}" stroke-width="1"/>
+
+          <!-- FRAME 1: Left Lead Contact Stride -->
+          <g class="rf rf1">
+            <path d="M -3,-24 L 7,-14 L 16,0" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L -13,-14 L -18,-2" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L 11,-32 L 18,-24" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+          </g>
+
+          <!-- FRAME 2: Left Absorption / Passing Stride -->
+          <g class="rf rf2">
+            <path d="M -3,-24 L 8,-12 L 11,0" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L -5,-12 L -2,-1" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L 8,-32 L 12,-22" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+          </g>
+
+          <!-- FRAME 3: Right Lead Contact Stride -->
+          <g class="rf rf3">
+            <path d="M -3,-24 L -13,-14 L -18,-2" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L 7,-14 L 16,0" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L -6,-32 L -12,-24" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+          </g>
+
+          <!-- FRAME 4: Right Absorption / Passing Stride -->
+          <g class="rf rf4">
+            <path d="M -3,-24 L -5,-12 L -2,-1" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M -4,-24 L 8,-12 L 11,0" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <path d="M 2,-42 L 4,-32 L 6,-22" stroke="${p.ninjaSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
+          </g>
         </g>
       </g>
 
-      <!-- POSE 3: CROUCH SLIDE (Super low profile: height only 20px!) -->
-      <g class="pose-slide">
-        <!-- Low flat streaming scarf -->
-        <path d="M -18,-17 C -34,-15 -48,-12 -62,-10 C -48,-17 -34,-19 -18,-20 Z" fill="${p.scarf}"/>
-        <path d="M -16,-14 C -30,-11 -42,-8 -54,-6 C -40,-13 -28,-15 -16,-17 Z" fill="${p.scarfLight}" opacity="0.85"/>
-        <!-- Body angled back flat to floor -->
-        <polygon points="-16,-19 6,-17 2,-6 -18,-7" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
-        <ellipse cx="8" cy="-20" rx="7.5" ry="7" fill="${p.ninjaHead}"/>
-        <polygon points="7,-20 14,-20 13,-18 6,-18" fill="${p.eye}"/>
-        <!-- Extended sliding forward leg -->
-        <path d="M 2,-7 L 20,-4 L 32,-2" stroke="${p.ninjaSuit}" stroke-width="5" stroke-linecap="round" fill="none"/>
-        <!-- Folded back leg tucked to floor -->
-        <path d="M -16,-7 L -9,-4 L 3,-2" stroke="${p.ninjaHead}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
-        <!-- Katana trailing flat along floor -->
-        <path d="M -12,-11 L -36,-4" stroke="${p.katanaBlade}" stroke-width="2.4" stroke-linecap="round"/>
-        <line x1="-12" y1="-11" x2="-36" y2="-4" stroke="${p.katanaEdge}" stroke-width="1.2"/>
-        <rect x="-14" y="-13" width="3.5" height="5" rx="1" fill="${p.katanaGuard}"/>
-        <!-- Friction floor sparks -->
-        <circle cx="28" cy="0" r="1.8" fill="${p.spark}"/>
-        <circle cx="34" cy="-2" r="1.4" fill="${p.sparkAlt}"/>
-        <circle cx="-8" cy="0" r="1.6" fill="${p.spark}"/>
+      <!-- POSE 2: JUMPING FORWARD ROLL (360° Acrobatic Aerial Somersault Flip over spikes) -->
+      <g class="pose-jump">
+        <g class="aerial-flip-spinner">
+          <!-- Circular wind vortex streak -->
+          <circle cx="0" cy="-26" r="23" stroke="${p.slashGlow}" stroke-width="1.6" stroke-dasharray="28,14" fill="none" opacity="0.45"/>
+          <!-- Helical spinning scarf ribbons -->
+          <path d="M -10,-34 C -26,-36 -32,-20 -28,-6 C -24,8 -8,4 -4,-2 C -12,2 -20,-10 -16,-24 Z" fill="${p.scarf}"/>
+          <path d="M -8,-32 C -20,-30 -24,-16 -20,-4 C -16,6 -4,2 0,-3" stroke="${p.scarfLight}" stroke-width="2" fill="none" opacity="0.85"/>
+          <!-- Curled somersault body core -->
+          <path d="M -13,-36 C -20,-24 -17,-10 -5,-4 C 8,-4 15,-12 13,-24 C 11,-36 1,-40 -13,-36 Z" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.4"/>
+          <!-- Tucked ninja head -->
+          <ellipse cx="-4" cy="-25" rx="7.5" ry="7.5" fill="${p.ninjaHead}"/>
+          <polygon points="-7,-25 0,-25 -1,-23 -6,-23" fill="${p.eye}"/>
+          <!-- Tightly wrapped knees & legs tucked to chest -->
+          <path d="M -4,-6 C 7,-4 15,-10 11,-22 C 8,-12 2,-6 -4,-6 Z" fill="${p.ninjaArmor}"/>
+          <path d="M -6,-6 C 4,-4 11,-9 8,-19" stroke="${p.ninjaSuit}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+          <!-- Katana curved along the back in spin -->
+          <path d="M -12,-38 C -4,-42 12,-34 22,-20" stroke="${p.katanaBlade}" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+          <path d="M -12,-38 C -4,-42 12,-34 22,-20" stroke="${p.katanaEdge}" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+          <circle cx="-12" cy="-38" r="2.5" fill="${p.katanaGuard}"/>
+          <!-- Tucked arms clasping knees -->
+          <path d="M -2,-28 L 6,-22 L 4,-14" stroke="${p.ninjaSuit}" stroke-width="4" stroke-linecap="round" fill="none"/>
+        </g>
+      </g>
+
+      <!-- POSE 3: GROUND COMBAT FORWARD ROLL (360° Floor Roll under overhead barrier) -->
+      <g class="pose-roll">
+        <g class="ground-roll-spinner">
+          <!-- Floor spin speed ring -->
+          <circle cx="0" cy="-13" r="14" stroke="${p.slashGlow}" stroke-width="1.4" stroke-dasharray="18,10" fill="none" opacity="0.4"/>
+          <!-- Scarf curled tight along body -->
+          <path d="M -10,-19 C -18,-17 -22,-8 -18,-1 C -12,2 -4,0 0,-3" stroke="${p.scarf}" stroke-width="2.5" fill="none"/>
+          <!-- Compact rolling body ball (radius 13px, max height 26px!) -->
+          <path d="M -11,-21 C -16,-15 -15,-6 -5,-1 C 6,-1 13,-6 11,-14 C 9,-21 1,-25 -11,-21 Z" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.3"/>
+          <!-- Tucked head inside roll ball -->
+          <ellipse cx="-3" cy="-13" rx="6.5" ry="6.5" fill="${p.ninjaHead}"/>
+          <polygon points="-6,-13 0,-13 -1,-11 -5,-11" fill="${p.eye}"/>
+          <!-- Tucked knees tucked into roll ball -->
+          <path d="M -4,-2 C 5,-1 11,-5 9,-13" stroke="${p.ninjaArmor}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+          <path d="M -6,-2 C 3,-1 8,-4 6,-11" stroke="${p.ninjaSuit}" stroke-width="4" stroke-linecap="round" fill="none"/>
+          <!-- Katana parallel to roll core -->
+          <path d="M -10,-20 L 14,-7" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
+          <line x1="-10" y1="-20" x2="14" y2="-7" stroke="${p.katanaEdge}" stroke-width="1"/>
+          <!-- Rolling floor contact friction sparks -->
+          <circle cx="5" cy="0" r="1.6" fill="${p.spark}"/>
+          <circle cx="-6" cy="0" r="1.4" fill="${p.sparkAlt}"/>
+        </g>
       </g>
 
       <!-- POSE 4: HORIZONTAL SLASH (Aggressive forward lunge with straight horizontal blade) -->
       <g class="pose-slash-h">
-        <!-- Violent scarf snap -->
         <path d="M -16,-48 C -32,-52 -48,-46 -64,-50 C -48,-58 -32,-53 -16,-51 Z" fill="${p.scarf}"/>
-        <!-- Deep forward lunge body -->
         <polygon points="-12,-44 10,-42 8,-21 -10,-21" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
         <rect x="-12" y="-25" width="21" height="5" rx="1.5" fill="${p.scarf}"/>
         <ellipse cx="6" cy="-50" rx="8" ry="8" fill="${p.ninjaHead}"/>
         <polygon points="5,-50 13,-50 12,-48 4,-48" fill="${p.eye}"/>
-        <!-- Wide lunge legs -->
         <path d="M 6,-21 L 20,-10 L 28,0" stroke="${p.ninjaSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
         <path d="M -10,-21 L -24,-12 L -34,0" stroke="${p.ninjaHead}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <!-- Katana extended straight forward horizontally! -->
         <path d="M 8,-36 L 54,-33" stroke="${p.katanaBlade}" stroke-width="2.8" stroke-linecap="round"/>
         <line x1="8" y1="-36" x2="54" y2="-33" stroke="${p.katanaEdge}" stroke-width="1.4"/>
         <rect x="6" y="-39" width="3.5" height="6" rx="1" fill="${p.katanaGuard}"/>
-        <!-- Thrusting Arms -->
         <path d="M 4,-40 L 16,-36 L 10,-36" stroke="${p.ninjaSuit}" stroke-width="4.5" stroke-linecap="round"/>
       </g>
 
       <!-- POSE 5: DIAGONAL SLICE (45-degree angle downward cutting strike) -->
       <g class="pose-slash-d">
-        <!-- Sweeping scarf arc -->
         <path d="M -12,-50 C -30,-58 -42,-50 -54,-54 C -40,-64 -26,-58 -12,-54 Z" fill="${p.scarf}"/>
-        <!-- Torqued body stance -->
         <polygon points="-10,-44 10,-42 6,-21 -10,-21" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
         <rect x="-11" y="-26" width="20" height="5" rx="1.5" fill="${p.scarf}"/>
         <ellipse cx="4" cy="-50" rx="8" ry="8" fill="${p.ninjaHead}"/>
         <polygon points="3,-50 11,-50 10,-48 2,-48" fill="${p.eye}"/>
-        <!-- Stride legs -->
         <path d="M 6,-21 L 18,-8 L 22,0" stroke="${p.ninjaSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
         <path d="M -10,-21 L -20,-10 L -26,0" stroke="${p.ninjaHead}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <!-- Katana cutting down diagonally across chest -->
         <path d="M -3,-50 L 40,-12" stroke="${p.katanaBlade}" stroke-width="3" stroke-linecap="round"/>
         <line x1="-3" y1="-50" x2="40" y2="-12" stroke="${p.katanaEdge}" stroke-width="1.4"/>
         <circle cx="0" cy="-47" r="2.6" fill="${p.katanaGuard}"/>
@@ -566,15 +566,12 @@ function buildSvg(grid, theme) {
       <!-- POSE 6: OVERHEAD CLEAVE (Two hands high, crashing straight down) -->
       <g class="pose-slash-o">
         <path d="M -10,-46 C -26,-38 -38,-26 -48,-18 C -36,-28 -22,-40 -10,-48 Z" fill="${p.scarf}"/>
-        <!-- Downward follow-through body -->
         <polygon points="-10,-42 8,-40 6,-19 -10,-19" fill="${p.ninjaSuit}" stroke="${p.ninjaArmor}" stroke-width="1.2"/>
         <rect x="-11" y="-24" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
         <ellipse cx="3" cy="-47" rx="8" ry="8" fill="${p.ninjaHead}"/>
         <polygon points="2,-47 10,-47 9,-45 1,-45" fill="${p.eye}"/>
-        <!-- Landing legs -->
         <path d="M 6,-19 L 14,-6 L 16,0" stroke="${p.ninjaSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
         <path d="M -10,-19 L -18,-8 L -20,0" stroke="${p.ninjaHead}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <!-- Katana crashing straight down from overhead -->
         <path d="M 14,-56 L 24,-2" stroke="${p.katanaBlade}" stroke-width="3.2" stroke-linecap="round"/>
         <line x1="14" y1="-56" x2="24" y2="-2" stroke="${p.katanaEdge}" stroke-width="1.5"/>
         <circle cx="14" cy="-52" r="2.8" fill="${p.katanaGuard}"/>
@@ -584,7 +581,6 @@ function buildSvg(grid, theme) {
   `;
 
   // 9. CSS Keyframes Generation
-  // Ninja translation keyframes
   const ninjaKf = NINJA_TRAJECTORY.map(([time, x, y]) => {
     const pVal = pct(time);
     const ty = GROUND_Y + y;
@@ -616,10 +612,10 @@ function buildSvg(grid, theme) {
       ${ninjaKf}
     }
 
-    /* Poses visibility (deterministic non-overlapping intervals) */
+    /* Poses visibility */
     .pose-run { animation: animRun ${dur} step-end infinite; }
     .pose-jump { opacity: 0; animation: animJump ${dur} step-end infinite; }
-    .pose-slide { opacity: 0; animation: animSlide ${dur} step-end infinite; }
+    .pose-roll { opacity: 0; animation: animRoll ${dur} step-end infinite; }
     .pose-slash-h { opacity: 0; animation: animSlashH ${dur} step-end infinite; }
     .pose-slash-d { opacity: 0; animation: animSlashD ${dur} step-end infinite; }
     .pose-slash-o { opacity: 0; animation: animSlashO ${dur} step-end infinite; }
@@ -644,7 +640,7 @@ function buildSvg(grid, theme) {
       21.10%, 100% { opacity: 0; }
     }
 
-    @keyframes animSlide {
+    @keyframes animRoll {
       0%, 43.39% { opacity: 0; }
       43.40%, 54.89% { opacity: 1; }
       54.90%, 100% { opacity: 0; }
@@ -666,6 +662,60 @@ function buildSvg(grid, theme) {
       0%, 75.99% { opacity: 0; }
       76.00%, 82.89% { opacity: 1; }
       82.90%, 100% { opacity: 0; }
+    }
+
+    /* Dynamic Run Mechanics: Torso Bob & 4-Frame Stride Cycle */
+    .run-bob {
+      animation: runBob 0.36s ease-in-out infinite;
+    }
+    @keyframes runBob {
+      0%, 50%, 100% { transform: translateY(0px); }
+      25%, 75% { transform: translateY(-2.5px); }
+    }
+
+    .rf { opacity: 0; }
+    .rf1 { animation: cycleRf1 0.36s step-end infinite; }
+    .rf2 { animation: cycleRf2 0.36s step-end infinite; }
+    .rf3 { animation: cycleRf3 0.36s step-end infinite; }
+    .rf4 { animation: cycleRf4 0.36s step-end infinite; }
+
+    @keyframes cycleRf1 {
+      0%, 24.99% { opacity: 1; }
+      25.00%, 100% { opacity: 0; }
+    }
+    @keyframes cycleRf2 {
+      0%, 24.99% { opacity: 0; }
+      25.00%, 49.99% { opacity: 1; }
+      50.00%, 100% { opacity: 0; }
+    }
+    @keyframes cycleRf3 {
+      0%, 49.99% { opacity: 0; }
+      50.00%, 74.99% { opacity: 1; }
+      75.00%, 100% { opacity: 0; }
+    }
+    @keyframes cycleRf4 {
+      0%, 74.99% { opacity: 0; }
+      75.00%, 100% { opacity: 1; }
+    }
+
+    /* Jumping Forward Roll: 360° Acrobatic Aerial Somersault Flip */
+    .aerial-flip-spinner {
+      transform-origin: 0px -26px;
+      animation: animAerialSomersault ${dur} linear infinite;
+    }
+    @keyframes animAerialSomersault {
+      0%, ${pct(EVT.jumpFlipStart)}% { transform: rotate(0deg); }
+      ${pct(EVT.jumpFlipEnd)}%, 100% { transform: rotate(360deg); }
+    }
+
+    /* Ground Combat Forward Roll: 360° Roll under overhead barrier */
+    .ground-roll-spinner {
+      transform-origin: 0px -13px;
+      animation: animGroundRoll ${dur} linear infinite;
+    }
+    @keyframes animGroundRoll {
+      0%, ${pct(EVT.rollSpinStart)}% { transform: rotate(0deg); }
+      ${pct(EVT.rollSpinEnd)}%, 100% { transform: rotate(360deg); }
     }
 
     /* Attack 1 VFX and Enemy 1 reaction (X = 360) */
@@ -770,28 +820,11 @@ function buildSvg(grid, theme) {
       100% { transform: rotate(6deg) scaleY(1.18); }
     }
 
-    /* Micro-animations: running legs cycling */
-    .leg-l {
-      animation: legCycleL 0.36s ease-in-out infinite alternate;
-      transform-origin: -3px -24px;
-    }
-    .leg-r {
-      animation: legCycleR 0.36s ease-in-out infinite alternate;
-      transform-origin: -4px -24px;
-    }
-    @keyframes legCycleL {
-      0% { transform: rotate(-16deg); }
-      100% { transform: rotate(20deg); }
-    }
-    @keyframes legCycleR {
-      0% { transform: rotate(20deg); }
-      100% { transform: rotate(-16deg); }
-    }
-
     /* Reduced motion accessibility */
     @media (prefers-reduced-motion: reduce) {
       #ninja-carrier, .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-3,
-      .e1-top, .e1-bot, .e2-top, .e2-bot, .e3-left, .e3-right {
+      .e1-top, .e1-bot, .e2-top, .e2-bot, .e3-left, .e3-right,
+      .aerial-flip-spinner, .ground-roll-spinner, .run-bob {
         animation: none !important;
       }
       .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-3 { display: none; }
