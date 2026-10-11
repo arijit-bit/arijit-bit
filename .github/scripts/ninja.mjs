@@ -19,6 +19,9 @@ import { join } from "node:path";
 
 const outDir = process.argv.slice(2).find((a) => !a.startsWith("--")) || "assets";
 const DEBUG = process.argv.includes("--debug");
+// Simulation speed multiplier (e.g. 1.0 = original 30.3s, 2.0 = ~15.1s, 2.5 = ~12.1s ultra-fast anime pacing)
+const speedArg = process.argv.find((a) => a.startsWith("--speed="));
+const SPEED = speedArg ? parseFloat(speedArg.split("=")[1]) || 2.5 : 2.5;
 
 /* ────────────────────────── scene constants ────────────────────────── */
 const W = 900;                 // canvas width
@@ -204,6 +207,7 @@ add("exit", 2.6, [[0, 50], [2.6, 62]]);
 
 const T_EXIT = cur;
 const T = +(T_EXIT + 2.2).toFixed(3); // loop length (includes enemy respawn + a calm beat)
+const DURATION = +(T / SPEED).toFixed(2); // actual loop duration after speed scaling
 
 /* ───────────────────────── kinematic integration ───────────────────────── */
 const segAt = (t) => segs.find((s) => t >= s.t0 && t < s.t1) || null;
@@ -792,12 +796,14 @@ function build(theme) {
 
   css += rigKeyframes();
 
+  const sc1Dur = n2(0.62 / SPEED);
+  const sc2Dur = n2(0.83 / SPEED);
   const style =
-    `.a{animation-duration:${T}s;animation-iteration-count:infinite;animation-timing-function:linear}` +
+    `.a{animation-duration:${DURATION}s;animation-iteration-count:infinite;animation-timing-function:linear}` +
     `.fx{opacity:0}` +
     `@keyframes fl1{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(6deg)}}` +
     `@keyframes fl2{0%,100%{transform:rotate(4deg)}50%{transform:rotate(-7deg)}}` +
-    `.sc1{animation:fl1 .62s ease-in-out infinite}.sc2{animation:fl2 .83s ease-in-out infinite}` +
+    `.sc1{animation:fl1 ${sc1Dur}s ease-in-out infinite}.sc2{animation:fl2 ${sc2Dur}s ease-in-out infinite}` +
     css +
     `@media (prefers-reduced-motion:reduce){.r,.fx{display:none}.a{animation:none}}`;
 
@@ -817,6 +823,6 @@ for (const theme of ["dark", "light"]) {
   const svg = build(theme);
   const file = join(outDir, `ninja-${theme}.svg`);
   writeFileSync(file, svg);
-  console.log(`${file}: ${(svg.length / 1024).toFixed(0)} KB, loop ${T.toFixed(1)}s`);
+  console.log(`${file}: ${(svg.length / 1024).toFixed(0)} KB, loop ${DURATION}s (${SPEED}x speed, baseline ${T.toFixed(1)}s)`);
 }
 if (DEBUG) for (const l of metrics()) console.log("  " + l);
