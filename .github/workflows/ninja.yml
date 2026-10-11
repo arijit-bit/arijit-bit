@@ -2,43 +2,47 @@ name: Generate Ninja Animation
 
 on:
   schedule:
-    - cron: "0 0 * * *"      # Refresh daily at midnight UTC
-  workflow_dispatch:          # Run manually from Actions tab
+    - cron: "0 3 * * 1"      # weekly safety refresh (Mon 03:00 UTC)
+  workflow_dispatch:          # run manually from the Actions tab
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - ".github/scripts/ninja.mjs"
       - ".github/workflows/ninja.yml"
 
-permissions:
-  contents: write
-
+# Only one run at a time; never cancel a run that is mid-commit.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ninja-animation
+  cancel-in-progress: false
+
+permissions:
+  contents: write             # needed to commit the generated SVGs
 
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
 
-      - name: Generate Ninja Animation SVGs
-        run: node .github/scripts/ninja.mjs "${{ github.repository_owner }}" dist
+      # No dependencies: the generator is a single self-contained script.
+      - name: Generate ninja animation
+        run: node .github/scripts/ninja.mjs assets
 
-      - name: Push to output branch
-        uses: crazy-max/ghaction-github-pages@v4
-        with:
-          target_branch: output
-          build_dir: dist
-          commit_message: "chore: update ninja profile animation [skip ci]"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit only if the output changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/ninja-dark.svg assets/ninja-light.svg
+          if git diff --cached --quiet; then
+            echo "Animation unchanged - nothing to commit."
+          else
+            git commit -m "chore: update ninja animation [skip ci]"
+            git push
+          fi

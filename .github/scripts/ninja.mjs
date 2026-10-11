@@ -1,1015 +1,822 @@
 #!/usr/bin/env node
-// Feudal Japan / Edo Shinobi Profile Animation Generator (zero dependencies, Node 18+).
+// Shadow Ninja — cinematic side-scroller animation generator.
 //
-// Theme: Traditional Japanese / Feudal Edo
-// - Moonlit midnight sky with radiant full moon, distant pagoda silhouettes, bamboo stalks,
-//   and blowing Sakura (cherry blossom) petals drifting across 5 distinct movement lanes.
-// - Authentic Torii gate and traditional wooden bridge rails.
-// - 5 rows of contribution tiles styled as ancient moss-stone / jade seals.
-// - Shinobi Ronin character (~60px tall, 2 rows) with flowing haori coat & crimson scarf ribbons.
-// - 4-frame fluid Edo sprint with authentic low-center-of-gravity stride & vertical bounce.
-// - 360° aerial somersault flip over bamboo spike barricade.
-// - 360° ground combat roll under suspended Torii lantern beam.
-// - Sword combat with Calligraphic Sumi-e Ink and Crimson blade trails.
-// - Climactic Demon Oni Mini-Boss encounter at the climax with horns, glowing eyes,
-//   and dramatic spirit shatter explosion into swirling sakura petals!
-// - Dual theme support: ninja-dark.svg and ninja-light.svg.
+//   node .github/scripts/ninja.mjs [outDir=assets] [--debug]
+//
+// Writes <outDir>/ninja-dark.svg and <outDir>/ninja-light.svg.
+// Fully deterministic (no network, no randomness, no dependencies): the same
+// script always produces byte-identical output, so CI only commits on change.
+//
+// Output format: one self-contained animated SVG per theme (pure CSS
+// keyframes, no scripts) — GitHub renders these natively inside README <img>.
+// The ninja is a small skeletal rig. A choreographed timeline drives the rig;
+// forward kinematics of that same rig is used to (a) draw the blade trails
+// exactly along the real sword-tip path and (b) place enemies / obstacles so
+// every action lines up with the thing it reacts to.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const user = process.argv[2] || process.env.GITHUB_USER || "arijit-bit";
-const outDir = process.argv[3] || "dist";
+const outDir = process.argv.slice(2).find((a) => !a.startsWith("--")) || "assets";
+const DEBUG = process.argv.includes("--debug");
 
-// ---------- scene layout constants ----------
-const WIDTH = 920;
-const HEIGHT = 180;
-const ROWS = 5;
-const ROW_H = 32;
-const PAD_TOP = 10;
-const GROUND_Y = PAD_TOP + ROWS * ROW_H; // 170
+/* ────────────────────────── scene constants ────────────────────────── */
+const W = 900;                 // canvas width
+const R = 30;                  // height of one row
+const ROWS = 5;                // exactly five movement rows
+const TOP = 18;                // space above row 1
+const GROUND = TOP + ROWS * R; // y of the floor line (bottom of row 5)
+const H = GROUND + 32;         // canvas height
+const X0 = -42;                // ninja starts off-screen left …
+const X_END = W + 70;          // … and leaves off-screen right
+const S0 = 44;                 // run stride length (px per full leg cycle)
+const VRUN = 50;               // nominal run speed (raw units, rescaled below)
 
-const COLS = 52;
-const CELL_SIZE = 11;
-const CELL_PITCH = 16;
-const GRID_START_X = 44;
+/* ───────────────────────────── helpers ───────────────────────────── */
+const D2R = Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, u) => a + (b - a) * u;
+const smooth = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
+const EASE = {
+  io: (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2),
+  o: (u) => 1 - Math.pow(1 - u, 3),
+  i: (u) => u * u * u,
+  l: (u) => u,
+};
+const n1 = (v) => String(+v.toFixed(1));
+const n2 = (v) => String(+v.toFixed(2));
+function rng(seed) {
+  let s = seed >>> 0;
+  return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+}
 
-// ---------- Edo Japanese Palettes ----------
-const PALETTES = {
+/* ─────────────────────────────── rig ─────────────────────────────── */
+// Dimensions chosen so a standing ninja is ~2 rows (2*R = 60px) tall.
+const L = { TH: 13, SH: 13, FT: 2, TO: 17, NK: 2, HR: 6.2, UA: 10, FA: 9.5, BL: 32 };
+const KEYS = ["lean", "head", "hipN", "kneeN", "hipF", "kneeF", "shN", "elN", "shF", "elF", "blade"];
+const BASE = { lean: 0, head: 0, hipN: 0, kneeN: 0, hipF: 0, kneeF: 0, shN: 0, elN: 0, shF: 0, elF: 0, blade: 64 };
+const pose = (o) => ({ ...BASE, ...o });
+function mix(a, b, u) {
+  const o = {};
+  for (const k of KEYS) {
+    if (k === "blade") {
+      const d = ((b.blade - a.blade + 540) % 360) - 180; // shortest way round
+      o.blade = a.blade + d * u;
+    } else o[k] = a[k] + (b[k] - a[k]) * u;
+  }
+  return o;
+}
+// unit vector of a limb that points "down" at rest, rotated by css angle a (deg, clockwise)
+const dd = (a) => [-Math.sin(a * D2R), Math.cos(a * D2R)];
+// Forward kinematics, coordinates relative to the pelvis (x forward, y down).
+function fk(p) {
+  const up = [Math.sin(p.lean * D2R), -Math.cos(p.lean * D2R)];
+  const S = [up[0] * L.TO, up[1] * L.TO];
+  const hu = [Math.sin((p.lean + p.head) * D2R), -Math.cos((p.lean + p.head) * D2R)];
+  const head = [S[0] + hu[0] * (L.NK + L.HR), S[1] + hu[1] * (L.NK + L.HR)];
+  const arm = (sh, el) => {
+    const ua = p.lean - sh, fa = ua - el;
+    const u = dd(ua), f = dd(fa);
+    const E = [S[0] + u[0] * L.UA, S[1] + u[1] * L.UA];
+    const Hd = [E[0] + f[0] * L.FA, E[1] + f[1] * L.FA];
+    return { ua, fa, E, H: Hd };
+  };
+  const an = arm(p.shN, p.elN), af = arm(p.shF, p.elF);
+  const bd = dd(p.blade);
+  const tip = [an.H[0] + bd[0] * L.BL, an.H[1] + bd[1] * L.BL];
+  const mid = [an.H[0] + bd[0] * L.BL * 0.45, an.H[1] + bd[1] * L.BL * 0.45];
+  const leg = (hip, knee) => {
+    const th = dd(-hip), sh = dd(-hip + knee);
+    const K = [th[0] * L.TH, th[1] * L.TH];
+    const A = [K[0] + sh[0] * L.SH, K[1] + sh[1] * L.SH];
+    return { K, A, drop: A[1] + L.FT };
+  };
+  const ln = leg(p.hipN, p.kneeN), lf = leg(p.hipF, p.kneeF);
+  return { S, head, an, af, tip, mid, ln, lf, pelvisH: Math.max(ln.drop, lf.drop) };
+}
+
+// Distance-driven run cycle: the legs advance with the ground, so feet don't skate.
+function runPose(phi, amp) {
+  const s = Math.sin, c = Math.cos;
+  const leg = (ph) => ({
+    hip: 6 * amp + 24 * amp * s(ph),
+    knee: 14 + 46 * amp * Math.pow((1 + c(ph)) / 2, 1.4),
+  });
+  const n = leg(phi), f = leg(phi + Math.PI);
+  return {
+    lean: 14 + 8 * amp, head: -10,
+    hipN: n.hip, kneeN: n.knee, hipF: f.hip, kneeF: f.knee,
+    shN: -40 + 4 * s(phi + Math.PI), elN: 16,    // sword arm trails behind (ninja run)
+    shF: -36 + 5 * s(phi), elF: 22,
+    blade: 70,
+  };
+}
+
+/* ───────────────────────────── key poses ───────────────────────────── */
+const PO = {
+  // jump
+  crouch:   pose({ lean: 36, head: -24, hipN: 58, kneeN: 108, hipF: 48, kneeF: 98, shN: -62, elN: 10, shF: -58, elF: 14, blade: 96 }),
+  launch:   pose({ lean: 10, head: -8, hipN: 14, kneeN: 10, hipF: -34, kneeF: 8, shN: 128, elN: 14, shF: 138, elF: 18, blade: -150 }),
+  tuck:     pose({ lean: 20, head: -12, hipN: 92, kneeN: 124, hipF: 58, kneeF: 122, shN: 56, elN: 38, shF: 70, elF: 40, blade: -118 }),
+  fall:     pose({ lean: 12, head: -6, hipN: 38, kneeN: 52, hipF: 8, kneeF: 42, shN: 82, elN: 20, shF: 92, elF: 24, blade: -100 }),
+  landPrep: pose({ lean: 14, head: -8, hipN: 24, kneeN: 20, hipF: 10, kneeF: 18, shN: 60, elN: 20, shF: 70, elF: 22, blade: -96 }),
+  land:     pose({ lean: 34, head: -22, hipN: 62, kneeN: 116, hipF: 54, kneeF: 108, shN: -10, elN: 30, shF: -20, elF: 30, blade: 80 }),
+  // slide
+  slidePrep: pose({ lean: 38, head: -26, hipN: 60, kneeN: 104, hipF: 44, kneeF: 92, shN: -62, elN: 10, shF: -58, elF: 16, blade: 96 }),
+  slide:     pose({ lean: -76, head: 66, hipN: 84, kneeN: 6, hipF: 30, kneeF: 112, shN: -66, elN: 24, shF: -108, elF: 4, blade: 84 }),
+  slideRise: pose({ lean: 34, head: -24, hipN: 70, kneeN: 96, hipF: -10, kneeF: 128, shN: 30, elN: 30, shF: -50, elF: 20, blade: -100 }),
+  // ground combat
+  guard:   pose({ lean: 10, head: -6, hipN: 26, kneeN: 34, hipF: -12, kneeF: 24, shN: 42, elN: 72, shF: 12, elF: 52, blade: -122 }),
+  windH:   pose({ lean: 4, head: -2, hipN: 34, kneeN: 54, hipF: -30, kneeF: 14, shN: -44, elN: 88, shF: -30, elF: 60, blade: -112 }),
+  strikeH: pose({ lean: 26, head: -14, hipN: 52, kneeN: 74, hipF: -44, kneeF: 6, shN: 118, elN: 4, shF: -72, elF: 30, blade: -90 }),
+  followH: pose({ lean: 20, head: -10, hipN: 46, kneeN: 66, hipF: -40, kneeF: 8, shN: 104, elN: 12, shF: -60, elF: 34, blade: -84 }),
+  windD:   pose({ lean: 2, head: 4, hipN: 30, kneeN: 46, hipF: -24, kneeF: 16, shN: 168, elN: 24, shF: 58, elF: 42, blade: 150 }),
+  strikeD: pose({ lean: 26, head: -14, hipN: 54, kneeN: 76, hipF: -42, kneeF: 8, shN: 78, elN: 20, shF: -60, elF: 24, blade: 292 }),
+  windR:   pose({ lean: 24, head: -12, hipN: 52, kneeN: 72, hipF: -40, kneeF: 8, shN: 56, elN: 30, shF: -50, elF: 28, blade: 300 }),
+  strikeR: pose({ lean: 20, head: -8, hipN: 46, kneeN: 66, hipF: -34, kneeF: 10, shN: 150, elN: 10, shF: -40, elF: 30, blade: 158 }),
+  followR: pose({ lean: 16, head: -6, hipN: 40, kneeN: 56, hipF: -30, kneeF: 12, shN: 120, elN: 20, shF: -30, elF: 30, blade: 200 }),
+  // overhead leap
+  launchO: pose({ lean: 10, head: -8, hipN: 16, kneeN: 10, hipF: -34, kneeF: 8, shN: 136, elN: 12, shF: 140, elF: 16, blade: 176 }),
+  tuckO:   pose({ lean: 14, head: -10, hipN: 86, kneeN: 118, hipF: 50, kneeF: 118, shN: 170, elN: 14, shF: 150, elF: 24, blade: 180 }),
+  windO:   pose({ lean: 4, head: -2, hipN: 88, kneeN: 120, hipF: 56, kneeF: 122, shN: 176, elN: 16, shF: 130, elF: 30, blade: 196 }),
+  strikeO: pose({ lean: 34, head: -22, hipN: 60, kneeN: 80, hipF: 24, kneeF: 74, shN: 74, elN: 8, shF: 70, elF: 24, blade: 338 }),
+  landPrepO: pose({ lean: 20, head: -12, hipN: 34, kneeN: 30, hipF: 14, kneeF: 28, shN: 84, elN: 14, shF: 60, elF: 24, blade: 300 }),
+  landO:   pose({ lean: 38, head: -26, hipN: 66, kneeN: 120, hipF: 58, kneeF: 112, shN: 70, elN: 20, shF: 30, elF: 30, blade: 290 }),
+};
+
+/* ───────────────────────────── choreography ───────────────────────────── */
+// Each segment: duration, speed control points [t,v] (relative), key poses
+// [t, pose|'run', ease] (ease describes the move *into* that key), optional
+// airborne window, and optional strikes (blade swings) with hit times.
+const segs = [];
+let cur = 0;
+function add(name, dur, spd, keys, extra = {}) {
+  const s = { name, t0: cur, t1: cur + dur, dur, spd, keys: keys || [[0, "run"], [dur, "run"]], ...extra };
+  segs.push(s);
+  cur += dur;
+  return s;
+}
+add("enter", 2.4, [[0, 28], [2.4, 50]]);
+add("run1", 1.1, [[0, 50], [1.1, 50]]);
+
+// 1 ─ jump over a low obstacle
+add("jumpA", 2.9,
+  [[0, 50], [0.45, 46], [0.62, 50], [2.12, 54], [2.3, 42], [2.9, 50]],
+  [[0, "run"], [0.45, PO.crouch, "io"], [0.62, PO.launch, "o"], [1.0, PO.tuck, "io"], [1.5, PO.tuck, "l"],
+   [1.85, PO.fall, "io"], [2.12, PO.landPrep, "io"], [2.3, PO.land, "o"], [2.75, "run", "io"], [2.9, "run", "l"]],
+  { air: { a: 0.62, b: 2.12, h: 60 }, obstacle: { kind: "crate", at: 1.37 }, takeoff: 0.62, landing: 2.12 });
+add("run2", 1.2, [[0, 50], [1.2, 50]]);
+
+// 2 ─ horizontal lunge slash
+add("atk1", 3.8,
+  [[0, 50], [0.9, 10], [1.65, 8], [1.78, 80], [1.95, 22], [2.35, 8], [2.7, 12], [3.8, 50]],
+  [[0, "run"], [0.85, PO.guard, "io"], [1.4, PO.windH, "io"], [1.65, PO.windH, "l"], [1.95, PO.strikeH, "o"],
+   [2.35, PO.followH, "io"], [3.05, PO.guard, "io"], [3.6, "run", "io"], [3.8, "run", "l"]],
+  { strikes: [{ a: 1.65, b: 1.95, hit: 1.8, kind: "horizontal" }], enemy: "E1" });
+add("run3", 1.1, [[0, 50], [1.1, 50]]);
+
+// 3 ─ slide under an overhead barrier
+add("slide", 3.1,
+  [[0, 50], [0.5, 56], [0.78, 74], [1.05, 62], [1.8, 34], [2.2, 28], [2.7, 44], [3.1, 50]],
+  [[0, "run"], [0.5, PO.slidePrep, "io"], [0.8, PO.slide, "o"], [2.1, PO.slide, "l"], [2.45, PO.slideRise, "io"],
+   [2.8, "run", "io"], [3.1, "run", "l"]],
+  { barrier: { at: 1.1 }, slideDust: [0.9, 2.0] });
+add("run4", 1.0, [[0, 50], [1.0, 50]]);
+
+// 4 ─ diagonal slice → reverse swing combo
+add("atk2", 4.5,
+  [[0, 50], [0.9, 10], [1.6, 8], [1.78, 60], [2.0, 14], [2.2, 8], [2.4, 40], [2.6, 12], [3.0, 8], [3.6, 14], [4.5, 50]],
+  [[0, "run"], [0.85, PO.guard, "io"], [1.35, PO.windD, "io"], [1.6, PO.windD, "l"], [1.95, PO.strikeD, "o"],
+   [2.2, PO.windR, "io"], [2.55, PO.strikeR, "o"], [3.0, PO.followR, "io"], [3.6, PO.guard, "io"],
+   [4.2, "run", "io"], [4.5, "run", "l"]],
+  { strikes: [{ a: 1.6, b: 1.95, hit: 1.78, kind: "diagonal" }, { a: 2.2, b: 2.55, hit: 2.38, kind: "reverse" }], enemy: "E2" });
+add("run5", 0.9, [[0, 50], [0.9, 50]]);
+
+// 5 ─ leap and chop downward
+add("atk3", 3.5,
+  [[0, 50], [0.45, 46], [0.6, 50], [2.0, 56], [2.16, 40], [2.6, 30], [3.5, 50]],
+  [[0, "run"], [0.45, PO.crouch, "io"], [0.6, PO.launchO, "o"], [0.98, PO.tuckO, "io"], [1.28, PO.windO, "io"],
+   [1.36, PO.windO, "l"], [1.72, PO.strikeO, "o"], [2.0, PO.landPrepO, "io"], [2.16, PO.landO, "o"],
+   [2.6, PO.guard, "io"], [3.1, "run", "io"], [3.5, "run", "l"]],
+  { air: { a: 0.6, b: 2.0, h: 36 }, strikes: [{ a: 1.36, b: 1.72, hit: 1.6, kind: "overhead" }], enemy: "E3",
+    takeoff: 0.6, landing: 2.0 });
+add("exit", 2.6, [[0, 50], [2.6, 62]]);
+
+const T_EXIT = cur;
+const T = +(T_EXIT + 2.2).toFixed(3); // loop length (includes enemy respawn + a calm beat)
+
+/* ───────────────────────── kinematic integration ───────────────────────── */
+const segAt = (t) => segs.find((s) => t >= s.t0 && t < s.t1) || null;
+function speedRaw(t) {
+  const s = segAt(t);
+  if (!s) return 0;
+  const tau = t - s.t0;
+  const p = s.spd;
+  let i = 0;
+  while (i < p.length - 2 && tau > p[i + 1][0]) i++;
+  const u = (tau - p[i][0]) / (p[i + 1][0] - p[i][0] || 1);
+  return lerp(p[i][1], p[i + 1][1], smooth(u));
+}
+const DT = 0.002;
+const NSTEP = Math.ceil(T_EXIT / DT) + 1;
+function integrate(k) {
+  const X = new Float64Array(NSTEP), PHI = new Float64Array(NSTEP), V = new Float64Array(NSTEP);
+  X[0] = X0;
+  for (let i = 0; i < NSTEP - 1; i++) {
+    const v = speedRaw(i * DT) * k;
+    V[i] = v;
+    const amp = clamp(v / (VRUN * k), 0.55, 1.05);
+    X[i + 1] = X[i] + v * DT;
+    PHI[i + 1] = PHI[i] + (2 * Math.PI * v * DT) / (S0 * amp);
+  }
+  V[NSTEP - 1] = V[NSTEP - 2];
+  return { X, PHI, V };
+}
+const raw = integrate(1);
+const K = (X_END - X0) / (raw.X[NSTEP - 1] - X0); // fit the whole route to the canvas
+const KIN = integrate(K);
+function kin(t) {
+  const f = clamp(t / DT, 0, NSTEP - 1);
+  const i = Math.min(NSTEP - 2, Math.floor(f)), u = f - i;
+  return {
+    x: lerp(KIN.X[i], KIN.X[i + 1], u),
+    phi: lerp(KIN.PHI[i], KIN.PHI[i + 1], u),
+    v: lerp(KIN.V[i], KIN.V[i + 1], u),
+  };
+}
+
+function stateAt(t) {
+  t = clamp(t, 0, T_EXIT);
+  const sg = segAt(t) || segs[segs.length - 1];
+  const tau = clamp(t - sg.t0, 0, sg.dur);
+  const { x, phi, v } = kin(t);
+  const amp = clamp(v / (VRUN * K), 0.55, 1.05);
+  const runP = runPose(phi, amp);
+  const ks = sg.keys;
+  let i = 0;
+  while (i < ks.length - 2 && tau > ks[i + 1][0]) i++;
+  const k0 = ks[i], k1 = ks[i + 1];
+  const u = clamp((tau - k0[0]) / (k1[0] - k0[0] || 1), 0, 1);
+  const e = EASE[k1[2] || "io"](u);
+  const pa = k0[1] === "run" ? runP : k0[1];
+  const pb = k1[1] === "run" ? runP : k1[1];
+  const p = mix(pa, pb, e);
+  let lift = 0;
+  if (sg.air && tau > sg.air.a && tau < sg.air.b) {
+    const w = (tau - sg.air.a) / (sg.air.b - sg.air.a);
+    lift = sg.air.h * 4 * w * (1 - w);
+  }
+  const f = fk(p);
+  return { t, x, py: GROUND - f.pelvisH - lift, lift, p, f, v };
+}
+// world-space helpers
+const W2 = (st, rel) => [st.x + rel[0], st.py + rel[1]];
+const bladeDir = (st) => dd(st.p.blade);
+const tipW = (st) => W2(st, st.f.tip);
+const midW = (st) => W2(st, st.f.mid);
+const hit = (sg, rel) => sg.t0 + rel;
+
+/* ───────────────────────── scene layout from the timeline ───────────────────────── */
+const events = { obstacles: [], barriers: [], enemies: [], dust: [], strikes: [] };
+const dbg = [];
+const SEG = Object.fromEntries(segs.map((s) => [s.name, s]));
+
+// low obstacle (crate stack) sits under the apex of the jump
+{
+  const sg = SEG.jumpA;
+  const st = stateAt(sg.t0 + sg.obstacle.at);
+  events.obstacles.push({ x: st.x + 2, w: 30, h: 26 });
+}
+// overhead barrier hangs over the middle of the slide
+{
+  const sg = SEG.slide;
+  const st = stateAt(sg.t0 + sg.barrier.at);
+  events.barriers.push({ x: st.x - 2, w: 36, bottom: 42, top: 66 });
+}
+// enemies are placed where the real blade tip is at the moment of contact
+function findHit(sg, s) {
+  const a = sg.t0 + s.a, b = sg.t0 + s.b;
+  const height = (t) => GROUND - tipW(stateAt(t))[1];
+  const goal = { horizontal: 32, diagonal: 40, reverse: 26, overhead: 28 }[s.kind];
+  const mid = a + (b - a) * 0.3;
+  for (let t = s.kind === "reverse" ? a : mid; t <= b; t += 0.002) {
+    const h = height(t);
+    if (s.kind === "reverse" ? h >= goal : s.kind === "horizontal" ? h >= goal : h <= goal) return t - sg.t0;
+  }
+  return s.hit;
+}
+function placeEnemy(sg) {
+  sg.strikes.forEach((s) => { s.hit = findHit(sg, s); });
+  const hs = sg.strikes.map((s) => stateAt(sg.t0 + s.hit));
+  const tips = hs.map(tipW);
+  const ex = tips.reduce((a, t) => a + t[0], 0) / tips.length + 5;
+  const en = { id: sg.enemy, x: ex, hits: [] };
+  sg.strikes.forEach((s, i) => {
+    const t = sg.t0 + s.hit;
+    const a = stateAt(t - 0.012), b = stateAt(t + 0.012);
+    const ta = tipW(a), tb = tipW(b);
+    let d = [tb[0] - ta[0], tb[1] - ta[1]];
+    const m = Math.hypot(d[0], d[1]) || 1;
+    d = [d[0] / m, d[1] / m];
+    const want = { horizontal: [1, -0.06], diagonal: [0.75, 0.66], reverse: [0.78, -0.62], overhead: [0.06, 1] }[s.kind];
+    d = [0.35 * d[0] + 0.65 * want[0], 0.35 * d[1] + 0.65 * want[1]];
+    const mm = Math.hypot(d[0], d[1]);
+    d = [d[0] / mm, d[1] / mm];
+    const c = [clamp(tips[i][0], ex - 12, ex + 10), clamp(tips[i][1], GROUND - 42, GROUND - 8)];
+    en.hits.push({ t, kind: s.kind, d, c, tip: tips[i] });
+    dbg.push(`${en.id} ${s.kind}: hit t=${t.toFixed(2)}s tip=(${tips[i][0].toFixed(0)}, ${(GROUND - tips[i][1]).toFixed(0)} up) dir=(${d[0].toFixed(2)}, ${d[1].toFixed(2)})`);
+  });
+  events.enemies.push(en);
+}
+placeEnemy(SEG.atk1);
+placeEnemy(SEG.atk2);
+placeEnemy(SEG.atk3);
+
+/* ───────────────────────── quality metrics (printed with --debug) ───────────────────────── */
+function metrics() {
+  const out = [];
+  const stand = fk(pose({}));
+  const headTop = stand.pelvisH + (-stand.head[1]) + L.HR;
+  out.push(`standing height ${headTop.toFixed(1)}px  = ${(headTop / R).toFixed(2)} rows (target ~2)`);
+  out.push(`rows: ${ROWS}, row height ${R}px, ground y=${GROUND}`);
+  out.push(`speed scale K=${K.toFixed(3)}, loop ${T.toFixed(1)}s, route ${X0}→${X_END}`);
+  // jump clearance
+  const o = events.obstacles[0];
+  let minC = 1e9;
+  for (let t = SEG.jumpA.t0; t < SEG.jumpA.t1; t += 0.01) {
+    const st = stateAt(t);
+    for (const leg of [st.f.ln, st.f.lf]) {
+      const px = st.x + leg.A[0];
+      if (Math.abs(px - o.x) < o.w / 2 + 3) { const c = GROUND - (st.py + leg.A[1] + L.FT) - o.h; if (c < minC) { minC = c; globalThis.__w = [t, px - o.x, st.lift]; } }
+      const kx = st.x + leg.K[0];
+      if (Math.abs(kx - o.x) < o.w / 2 + 3) minC = Math.min(minC, GROUND - (st.py + leg.K[1]) - o.h);
+    }
+  }
+  out.push(`jump clearance over crate: ${minC.toFixed(1)}px (need > 2) worst@t=${(globalThis.__w || []).map((v) => v.toFixed(2)).join(',')}`);
+  // slide clearance: highest body point under the barrier vs the spike tips
+  const b = events.barriers[0];
+  const spikeY = b.bottom - 4; // height above ground of the spike tips
+  let worst = 1e9;
+  for (let t = SEG.slide.t0; t < SEG.slide.t1; t += 0.01) {
+    const st = stateAt(t);
+    const pts = [[st.f.head, L.HR], [st.f.S, 0], [st.f.an.H, 0], [st.f.af.H, 0], [st.f.tip, 0]];
+    for (const [q, r] of pts) {
+      const wx = st.x + q[0];
+      const height = GROUND - (st.py + q[1]) + r;
+      if (Math.abs(wx - b.x) < b.w / 2 + 2) { const c = spikeY - height; if (c < worst) { worst = c; globalThis.__s = [t, pts.findIndex((z) => z[0] === q), height]; } }
+    }
+  }
+  out.push(`slide clearance under barrier: ${worst.toFixed(1)}px (need > 1) worst(t,point,height)=${(globalThis.__s || []).map((v) => v.toFixed(2)).join(',')}  [0 head,1 shoulder,2 hand,3 far hand,4 blade tip]`);
+  for (const l of dbg) out.push(l);
+  return out;
+}
+
+/* ───────────────────────────── palettes ───────────────────────────── */
+const PAL = {
   dark: {
-    bg: "#090d16",
-    moon: "#fffbe8",
-    moonHalo: "rgba(255, 251, 232, 0.12)",
-    moonCrater: "rgba(217, 203, 163, 0.35)",
-    toriiBeam: "#b91c1c",
-    toriiGlow: "#ef4444",
-    toriiCap: "#18181b",
-    toriiPillar: "#991b1b",
-    laneLine: "rgba(244, 114, 182, 0.08)",
-    laneRowBg: [
-      "rgba(15, 23, 42, 0.5)",
-      "rgba(9, 13, 22, 0.3)",
-      "rgba(15, 23, 42, 0.5)",
-      "rgba(9, 13, 22, 0.3)",
-      "rgba(15, 23, 42, 0.5)",
-    ],
-    emptyCell: "#131b2c",
-    levels: ["#064e3b", "#047857", "#10b981", "#34d399"], // Jade seals
-    bridgeRail: "#78350f",
-    bridgePost: "#92400e",
-    bridgeGlow: "rgba(239, 68, 68, 0.3)",
-    sakura1: "#f472b6",
-    sakura2: "#fbcfe8",
-    sakuraGlow: "rgba(244, 114, 182, 0.6)",
-    // Shinobi Ronin
-    shinobiSuit: "#0f172a",
-    shinobiHaori: "#1e293b",
-    shinobiArmor: "#334155",
-    shinobiKasa: "#d97706",
-    scarf: "#f43f5e", // Crimson silk ribbon
-    scarfLight: "#fb7185",
-    eye: "#ffffff",
-    katanaBlade: "#ffffff",
-    katanaEdge: "#f43f5e",
-    katanaHilt: "#e11d48",
-    katanaGuard: "#f59e0b",
-    // VFX: Sumi-e ink + crimson blade trails
-    slashCore: "#ffffff",
-    slashGlow: "#e11d48",
-    slashInk: "#090d16",
-    slashTrail: "rgba(225, 29, 72, 0.35)",
-    spark: "#fb7185",
-    sparkAlt: "#fbbf24",
-    // Enemies & Mini-Boss
-    enemyBody: "#1e1b4b",
-    enemyArmor: "#312e81",
-    enemyEye: "#f43f5e",
-    // Demon Oni Mini-Boss
-    oniBody: "#7f1d1d",
-    oniArmor: "#1c1917",
-    oniHorns: "#fbbf24",
-    oniEye: "#fef08a",
-    oniMask: "#991b1b",
-    oniClub: "#292524",
-    oniClubSpikes: "#f59e0b",
-    textMuted: "#64748b",
-    laneLabel: "#f43f5e",
+    sky1: "#070b14", sky2: "#111c31", moon: "#e3eefb", moonGlow: "#79C0FF", far: "#0f192b", near: "#0b1424",
+    bamboo: "#0e1a2a", node: "#17283d", band: "#79C0FF", bandA: 0.045, line: "#79C0FF", lineA: 0.2, label: "#79C0FF", labelA: 0.5,
+    ground: "#09101b", groundTop: "#223250", tile: "#16243b", grass: "#1f5a45",
+    body: "#05070b", farBody: "#101722", scarf: "#79C0FF", eye: "#eaf7ff", blade: "#eef5fc", guard: "#79C0FF", glow: "#79C0FF", glowA: 0.8,
+    trail: "#ffffff", trailStroke: "none", trailGlow: "#79C0FF", spark: "#ffe3a3", dust: "#9db2cc", mote: "#d2f5a8",
+    en: { body: "#26a641", mid: "#1b8a38", shade: "#0e4429", hi: "#39d353", eye: "#ff7b6b" },
+    wood: "#6f4e2e", woodD: "#42301b", woodH: "#a07645", metal: "#8b949e", metalD: "#4b5563", rust: "#c8553d", chain: "#6e7681",
   },
   light: {
-    bg: "#fdfbf7",
-    moon: "#e2e8f0",
-    moonHalo: "rgba(203, 213, 225, 0.2)",
-    moonCrater: "rgba(148, 163, 184, 0.3)",
-    toriiBeam: "#b91c1c",
-    toriiGlow: "rgba(185, 28, 28, 0.2)",
-    toriiCap: "#1c1917",
-    toriiPillar: "#991b1b",
-    laneLine: "rgba(0, 0, 0, 0.05)",
-    laneRowBg: [
-      "rgba(245, 240, 230, 0.55)",
-      "rgba(253, 251, 247, 0.35)",
-      "rgba(245, 240, 230, 0.55)",
-      "rgba(253, 251, 247, 0.35)",
-      "rgba(245, 240, 230, 0.55)",
-    ],
-    emptyCell: "#e7e2d7",
-    levels: ["#a7f3d0", "#34d399", "#059669", "#047857"],
-    bridgeRail: "#78350f",
-    bridgePost: "#92400e",
-    bridgeGlow: "rgba(185, 28, 28, 0.2)",
-    sakura1: "#ec4899",
-    sakura2: "#f472b6",
-    sakuraGlow: "rgba(236, 72, 153, 0.4)",
-    // Shinobi Ronin
-    shinobiSuit: "#1c1917",
-    shinobiHaori: "#292524",
-    shinobiArmor: "#44403c",
-    shinobiKasa: "#b45309",
-    scarf: "#dc2626",
-    scarfLight: "#ef4444",
-    eye: "#ffffff",
-    katanaBlade: "#1c1917",
-    katanaEdge: "#dc2626",
-    katanaHilt: "#b91c1c",
-    katanaGuard: "#d97706",
-    // VFX
-    slashCore: "#1c1917",
-    slashGlow: "#dc2626",
-    slashInk: "#1c1917",
-    slashTrail: "rgba(220, 38, 38, 0.25)",
-    spark: "#dc2626",
-    sparkAlt: "#d97706",
-    // Enemies & Mini-Boss
-    enemyBody: "#3f3f46",
-    enemyArmor: "#52525b",
-    enemyEye: "#b91c1c",
-    oniBody: "#831843",
-    oniArmor: "#27272a",
-    oniHorns: "#d97706",
-    oniEye: "#dc2626",
-    oniMask: "#9f1239",
-    oniClub: "#18181b",
-    oniClubSpikes: "#d97706",
-    textMuted: "#78716c",
-    laneLabel: "#dc2626",
+    sky1: "#cfe3f7", sky2: "#f6f9fd", moon: "#ffd479", moonGlow: "#ffb84d", far: "#c5d6ea", near: "#b3c8e0",
+    bamboo: "#9fb8cf", node: "#86a1ba", band: "#0969da", bandA: 0.05, line: "#0969da", lineA: 0.22, label: "#0969da", labelA: 0.55,
+    ground: "#d9e2ec", groundTop: "#8aa0b8", tile: "#c3cfdc", grass: "#4f9d69",
+    body: "#1b1f24", farBody: "#3a424d", scarf: "#0969da", eye: "#ffffff", blade: "#6e7781", guard: "#0969da", glow: "#57606a", glowA: 0.55,
+    trail: "#ffffff", trailStroke: "#0969da", trailGlow: "#0969da", spark: "#f59e0b", dust: "#8c959f", mote: "#9be9a8",
+    en: { body: "#30a14e", mid: "#2a8f45", shade: "#216e39", hi: "#40c463", eye: "#cf222e" },
+    wood: "#8b5e34", woodD: "#5c3d1e", woodH: "#b98a55", metal: "#6e7781", metalD: "#424a53", rust: "#cf222e", chain: "#57606a",
   },
 };
 
-// ---------- contributions fetch with fallback ----------
-async function fetchContributions(login) {
-  const fallback = generateFallbackGrid();
-  if (!login) return fallback;
-  const url = `https://github.com/users/${encodeURIComponent(login)}/contributions`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    try { controller.abort(); } catch {}
-  }, 3500);
-
-  try {
-    const res = await fetch(url, {
-      headers: { "user-agent": "ninja-profile-generator" },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const html = await res.text();
-    const tags = html.match(/<td[^>]*ContributionCalendar-day[^>]*>/g) || [];
-    const cells = [];
-    for (const tag of tags) {
-      const level = /data-level="(\d)"/.exec(tag)?.[1];
-      if (level !== undefined) cells.push(Number(level));
+/* ───────────────────────────── svg builders ───────────────────────────── */
+// Reduce a sampled series to its essential keyframes (Ramer–Douglas–Peucker).
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const keep = new Set([0, pts.length - 1]);
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    let md = 0, idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const u = (pts[i].t - pts[a].t) / (pts[b].t - pts[a].t);
+      let d = 0;
+      for (let c = 0; c < pts[i].v.length; c++) {
+        d = Math.max(d, Math.abs(pts[a].v[c] + (pts[b].v[c] - pts[a].v[c]) * u - pts[i].v[c]));
+      }
+      if (d > md) { md = d; idx = i; }
     }
-    if (cells.length > 50) {
-      return mapToFiveRows(cells);
-    }
-  } catch {
-    // Return graceful fallback grid on any network error/timeout
-  } finally {
-    clearTimeout(timer);
+    if (md > eps && idx > 0) { keep.add(idx); stack.push([a, idx], [idx, b]); }
   }
-  return fallback;
+  return [...keep].sort((x, y) => x - y).map((i) => pts[i]);
+}
+const pct = (t) => ((clamp(t, 0, T) / T) * 100).toFixed(3);
+// frames: [[t, "css declarations"], ...] sorted by t
+function kfBlock(name, frames) {
+  const fr = frames.slice().sort((a, b) => a[0] - b[0]);
+  if (fr[0][0] > 0) fr.unshift([0, fr[0][1]]);
+  if (fr[fr.length - 1][0] < T) fr.push([T, fr[fr.length - 1][1]]);
+  let last = -1;
+  const parts = [];
+  for (const [t, css] of fr) {
+    let p = +pct(t);
+    if (p <= last) p = +(last + 0.0005).toFixed(4);
+    last = p;
+    parts.push(`${p}%{${css}}`);
+  }
+  return `@keyframes ${name}{${parts.join("")}}`;
+}
+function unwrap(a) {
+  const o = [a[0]];
+  for (let i = 1; i < a.length; i++) {
+    let v = a[i];
+    while (v - o[i - 1] > 180) v -= 360;
+    while (v - o[i - 1] < -180) v += 360;
+    o.push(v);
+  }
+  return o;
 }
 
-function generateFallbackGrid() {
-  const grid = [];
-  let seed = 42;
-  const random = () => {
-    seed = (seed * 16807) % 2147483647;
-    return (seed - 1) / 2147483646;
+// Sample the rig for the whole loop (30 samples/s, then simplify).
+function rigKeyframes() {
+  const dt = 1 / 30;
+  const ts = [];
+  for (let t = 0; t < T_EXIT; t += dt) ts.push(t);
+  ts.push(T_EXIT);
+  const sts = ts.map(stateAt);
+  const ch = {};
+  const push = (name, fn) => (ch[name] = sts.map(fn));
+  push("to", (s) => s.p.lean);
+  push("hd", (s) => s.p.head);
+  push("an", (s) => -s.p.shN);
+  push("fn", (s) => -s.p.elN);
+  push("af", (s) => -s.p.shF);
+  push("ff", (s) => -s.p.elF);
+  push("ln", (s) => -s.p.hipN);
+  push("sn", (s) => s.p.kneeN);
+  push("lf", (s) => -s.p.hipF);
+  push("sf", (s) => s.p.kneeF);
+  push("sw", (s) => s.p.blade - (s.p.lean - s.p.shN - s.p.elN));
+  ch.sw = unwrap(ch.sw);
+  let css = "";
+  for (const [name, arr] of Object.entries(ch)) {
+    const pts = ts.map((t, i) => ({ t, v: [arr[i]] }));
+    const kept = rdp(pts, 0.35);
+    css += kfBlock("k" + name, kept.map((p) => [p.t, `transform:rotate(${n1(p.v[0])}deg)`]));
+  }
+  // root + shadow (position)
+  const rpts = ts.map((t, i) => ({ t, v: [sts[i].x, sts[i].py] }));
+  css += kfBlock("kr", rdp(rpts, 0.3).map((p) => [p.t, `transform:translate(${n1(p.v[0])}px,${n1(p.v[1])}px)`]));
+  const spts = ts.map((t, i) => ({ t, v: [sts[i].x, 1 - clamp(sts[i].lift / 70, 0, 0.6)] }));
+  css += kfBlock("ksh", rdp(spts, 0.02).map((p) => [p.t, `transform:translate(${n1(p.v[0])}px,${GROUND}px) scale(${n2(p.v[1])},1);opacity:${n2(0.55 * p.v[1])}`]));
+  return css;
+}
+
+function ballistic(t0, o, v, g, life, steps = 5) {
+  const fr = [];
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps, tt = u * life;
+    fr.push([t0 + tt, [o[0] + v[0] * tt, o[1] + v[1] * tt + 0.5 * g * tt * tt]]);
+  }
+  return fr;
+}
+
+function build(theme) {
+  const p = PAL[theme];
+  let css = "";
+  let defs = "";
+  let bg = "", obst = "", enem = "", fxLow = "", fxHigh = "";
+  let uid = 0;
+  const R1 = rng(7);
+
+  /* ---------- background ---------- */
+  bg += `<rect width="${W}" height="${H}" fill="url(#sky)"/>`;
+  defs += `<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${p.sky1}"/><stop offset="1" stop-color="${p.sky2}"/></linearGradient>`;
+  defs += `<radialGradient id="moon"><stop offset="0" stop-color="${p.moonGlow}" stop-opacity=".55"/><stop offset="1" stop-color="${p.moonGlow}" stop-opacity="0"/></radialGradient>`;
+  if (theme === "dark") {
+    for (let i = 0; i < 46; i++) {
+      bg += `<circle cx="${n1(R1() * W)}" cy="${n1(R1() * (GROUND - 40))}" r="${n1(0.4 + R1() * 0.7)}" fill="#cfe3ff" opacity="${n2(0.15 + R1() * 0.45)}"/>`;
+    }
+  }
+  bg += `<circle cx="${W - 120}" cy="${TOP + 22}" r="46" fill="url(#moon)"/><circle cx="${W - 120}" cy="${TOP + 22}" r="14" fill="${p.moon}"/>`;
+  // mountains
+  const mtn = (base, amp, step, seed, col, op) => {
+    const r = rng(seed);
+    let d = `M0 ${GROUND}`;
+    for (let x = 0; x <= W + step; x += step) d += ` L${x} ${n1(base - r() * amp)}`;
+    d += ` L${W} ${GROUND}Z`;
+    return `<path d="${d}" fill="${col}" opacity="${op}"/>`;
   };
-  for (let r = 0; r < ROWS; r++) {
-    const row = [];
-    for (let c = 0; c < COLS; c++) {
-      const p = random();
-      const lvl = p > 0.82 ? 4 : p > 0.65 ? 3 : p > 0.45 ? 2 : p > 0.22 ? 1 : 0;
-      row.push(lvl);
-    }
-    grid.push(row);
+  bg += mtn(GROUND - 52, 38, 46, 11, p.far, 0.9);
+  bg += mtn(GROUND - 30, 24, 34, 5, p.near, 0.95);
+  // bamboo
+  const rb = rng(21);
+  for (let i = 0; i < 16; i++) {
+    const x = 20 + i * 56 + rb() * 24, hgt = 90 + rb() * 70;
+    bg += `<rect x="${n1(x)}" y="${n1(GROUND - hgt)}" width="3" height="${n1(hgt)}" fill="${p.bamboo}" opacity=".8"/>`;
+    for (let j = 1; j < 5; j++) bg += `<rect x="${n1(x - 0.5)}" y="${n1(GROUND - hgt * (j / 5))}" width="4" height="1.2" fill="${p.node}" opacity=".7"/>`;
   }
-  return grid;
-}
+  // five rows
+  for (let r = 0; r < ROWS; r++) {
+    const y = TOP + r * R;
+    bg += `<rect x="0" y="${y}" width="${W}" height="${R}" fill="${p.band}" opacity="${r % 2 === 0 ? p.bandA : p.bandA * 0.3}"/>`;
+    bg += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${p.line}" stroke-opacity="${p.lineA}" stroke-width=".7" stroke-dasharray="3 5"/>`;
+    bg += `<text x="7" y="${y + 11}" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="8" fill="${p.label}" opacity="${p.labelA}">${r + 1}</text>`;
+  }
+  bg += `<line x1="0" y1="${GROUND}" x2="${W}" y2="${GROUND}" stroke="${p.line}" stroke-opacity="${p.lineA + 0.15}" stroke-width=".9"/>`;
+  // ground
+  bg += `<rect x="0" y="${GROUND}" width="${W}" height="${H - GROUND}" fill="${p.ground}"/>`;
+  bg += `<rect x="0" y="${GROUND}" width="${W}" height="2" fill="${p.groundTop}"/>`;
+  for (let x = 0; x < W; x += 30) bg += `<path d="M${x} ${GROUND + 2}v${H - GROUND}" stroke="${p.tile}" stroke-width="1"/>`;
+  bg += `<path d="M0 ${GROUND + 16}H${W}" stroke="${p.tile}" stroke-width="1"/>`;
+  const rg = rng(33);
+  for (let i = 0; i < 70; i++) {
+    const gx = rg() * W;
+    bg += `<path d="M${n1(gx)} ${GROUND}l-1.2 -${n1(2 + rg() * 3)}m1.2 ${n1(0)}l1 -${n1(2 + rg() * 3)}" stroke="${p.grass}" stroke-width=".9" opacity=".7"/>`;
+  }
+  // motes / fireflies (independent gentle loops)
+  const rm = rng(99);
+  for (let i = 0; i < 9; i++) {
+    const mx = 40 + rm() * (W - 80), my = TOP + 8 + rm() * (R * 3);
+    const name = `m${i}`;
+    css += `@keyframes ${name}{0%{transform:translate(${n1(mx)}px,${n1(my)}px);opacity:.1}50%{transform:translate(${n1(mx + 12 * (rm() - 0.5) * 2)}px,${n1(my - 8 - rm() * 8)}px);opacity:.8}100%{transform:translate(${n1(mx)}px,${n1(my)}px);opacity:.1}}`;
+    bg += `<circle r="1.3" fill="${p.mote}" style="animation:${name} ${n1(5 + rm() * 5)}s ease-in-out infinite;animation-delay:-${n1(rm() * 6)}s"/>`;
+  }
 
-function mapToFiveRows(calendarLevels) {
-  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-  const total = calendarLevels.length;
-  const needed = ROWS * COLS;
-  const start = Math.max(0, total - needed);
-  let idx = start;
-  for (let c = 0; c < COLS; c++) {
-    for (let r = 0; r < ROWS; r++) {
-      if (idx < total) {
-        grid[r][c] = calendarLevels[idx++];
+  /* ---------- obstacles ---------- */
+  const crate = events.obstacles[0];
+  obst += `<g transform="translate(${n1(crate.x)},${GROUND})">` +
+    `<rect x="-15" y="-13" width="30" height="13" fill="${p.wood}" stroke="${p.woodD}" stroke-width="1.2"/>` +
+    `<path d="M-15 -13L15 0M15 -13L-15 0" stroke="${p.woodD}" stroke-width="1.2"/>` +
+    `<rect x="-15" y="-13" width="30" height="2.2" fill="${p.woodH}"/>` +
+    `<rect x="-10" y="-26" width="20" height="13" fill="${p.wood}" stroke="${p.woodD}" stroke-width="1.2"/>` +
+    `<path d="M-10 -26L10 -13M10 -26L-10 -13" stroke="${p.woodD}" stroke-width="1.1"/>` +
+    `<rect x="-10" y="-26" width="20" height="2" fill="${p.woodH}"/>` +
+    `<rect x="-15" y="-8" width="30" height="2.4" fill="${p.rust}" opacity=".85"/>` +
+    `</g>`;
+  const bar = events.barriers[0];
+  const by0 = GROUND - bar.top, by1 = GROUND - bar.bottom;
+  let chains = "";
+  for (const cx of [bar.x - 13, bar.x + 13]) {
+    chains += `<line x1="${n1(cx)}" y1="${TOP}" x2="${n1(cx)}" y2="${by0}" stroke="${p.chain}" stroke-width="2" stroke-dasharray="3 2"/>`;
+    chains += `<rect x="${n1(cx - 4)}" y="${TOP}" width="8" height="3" fill="${p.metalD}"/>`;
+  }
+  let spikes = "";
+  for (let i = 0; i < 6; i++) {
+    const sx = bar.x - bar.w / 2 + 3 + i * ((bar.w - 6) / 5);
+    spikes += `<path d="M${n1(sx - 2.6)} ${by1}L${n1(sx)} ${by1 + 4}L${n1(sx + 2.6)} ${by1}Z" fill="${p.metal}"/>`;
+  }
+  obst += chains +
+    `<rect x="${n1(bar.x - bar.w / 2)}" y="${by0}" width="${bar.w}" height="${by1 - by0}" rx="3" fill="${p.wood}" stroke="${p.woodD}" stroke-width="1.2"/>` +
+    `<rect x="${n1(bar.x - bar.w / 2)}" y="${by0}" width="${bar.w}" height="3" rx="1.5" fill="${p.woodH}"/>` +
+    `<rect x="${n1(bar.x - bar.w / 2)}" y="${by0 + 8}" width="${bar.w}" height="2" fill="${p.woodD}" opacity=".6"/>` +
+    `<rect x="${n1(bar.x - bar.w / 2 + 6)}" y="${by0}" width="3" height="${by1 - by0}" fill="${p.metalD}"/>` +
+    `<rect x="${n1(bar.x + bar.w / 2 - 9)}" y="${by0}" width="3" height="${by1 - by0}" fill="${p.metalD}"/>` +
+    spikes;
+
+  /* ---------- enemy art + filters ---------- */
+  const E = p.en;
+  defs += `<filter id="white"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0"/></filter>`;
+  defs += `<g id="enemy">` +
+    `<rect x="-9" y="-12" width="7" height="12" fill="${E.shade}"/><rect x="2" y="-12" width="7" height="12" fill="${E.shade}"/>` +
+    `<rect x="-17" y="-33" width="5" height="16" fill="${E.mid}"/><rect x="12" y="-33" width="5" height="16" fill="${E.mid}"/>` +
+    `<rect x="-13" y="-34" width="26" height="23" fill="${E.body}"/>` +
+    `<rect x="-13" y="-34" width="26" height="3" fill="${E.hi}"/>` +
+    `<rect x="-13" y="-14" width="26" height="3" fill="${E.shade}"/>` +
+    `<rect x="-8.5" y="-48" width="17" height="14" fill="${E.body}"/>` +
+    `<rect x="-8.5" y="-48" width="17" height="3" fill="${E.hi}"/>` +
+    `<rect x="-5.5" y="-42" width="3.4" height="2.6" fill="${E.eye}"/><rect x="2.1" y="-42" width="3.4" height="2.6" fill="${E.eye}"/>` +
+    `<rect x="-6" y="-36.5" width="12" height="1.6" fill="${E.shade}"/>` +
+    // little contribution-graph emblem on the chest
+    [0, 1, 2].map((r) => [0, 1, 2].map((c) => `<rect x="${-5 + c * 3.6}" y="${-28 + r * 3.6}" width="3" height="3" fill="${[E.hi, E.mid, E.shade, E.hi, E.body, E.mid, E.shade, E.hi, E.hi][r * 3 + c]}"/>`).join("")).join("") +
+    `</g>`;
+
+  const respawn0 = T_EXIT + 0.5;
+  events.enemies.forEach((en, ei) => {
+    const id = ei;
+    const last = en.hits[en.hits.length - 1];
+    const rs = respawn0 + ei * 0.22;
+    const d = last.d;
+    const nrm = [-d[1], d[0]];
+    const c = [last.c[0] - en.x, last.c[1] - GROUND];
+    const Ln = 120;
+    const poly = (s) => [
+      [c[0] - d[0] * Ln, c[1] - d[1] * Ln], [c[0] + d[0] * Ln, c[1] + d[1] * Ln],
+      [c[0] + d[0] * Ln + nrm[0] * Ln * s, c[1] + d[1] * Ln + nrm[1] * Ln * s],
+      [c[0] - d[0] * Ln + nrm[0] * Ln * s, c[1] - d[1] * Ln + nrm[1] * Ln * s],
+    ].map((q) => `${n1(q[0])},${n1(q[1])}`).join(" ");
+    defs += `<clipPath id="ca${id}"><polygon points="${poly(1)}"/></clipPath><clipPath id="cb${id}"><polygon points="${poly(-1)}"/></clipPath>`;
+    // recoil + flash for every hit
+    const rec = [[0, "transform:none"]];
+    const fl = [[0, "opacity:0"]];
+    en.hits.forEach((h) => {
+      rec.push([h.t - 0.002, "transform:translate(0,0)"], [h.t + 0.05, "transform:translate(3.5px,0)"], [h.t + 0.3, "transform:translate(0,0)"]);
+      fl.push([h.t - 0.002, "opacity:0"], [h.t + 0.012, "opacity:.95"], [h.t + 0.16, "opacity:0"]);
+    });
+    css += kfBlock(`rc${id}`, rec) + kfBlock(`fl${id}`, fl);
+    const half = (sgn, tag) => {
+      const push = 1 + 0.5 * (tag === "a" ? 1 : 0.8);
+      const dirv = [nrm[0] * sgn * 20 + d[0] * sgn * 9, nrm[1] * sgn * 20 + d[1] * sgn * 9];
+      const rot = (sgn * (nrm[0] >= 0 ? 1 : -1) * (14 + 18 * ((ei * 37 + (tag === "a" ? 5 : 11)) % 10) / 10)).toFixed(0);
+      const th = last.t;
+      const fr = [[0, "opacity:1;transform:none"], [th, "opacity:1;transform:none"]];
+      const samples = [0.1, 0.25, 0.45, 0.7, 1.0];
+      samples.forEach((u, i) => {
+        const g = 120 * u * u;
+        const op = u < 0.55 ? 1 : Math.max(0, 1 - (u - 0.55) / 0.45);
+        const ty = Math.min(3, dirv[1] * u * push + g * 0.35 * (dirv[1] < 0 ? 1 : 0.15));
+        fr.push([th + u * 0.95, `opacity:${n2(op)};transform:translate(${n1(dirv[0] * u * push)}px,${n1(ty)}px) rotate(${n1(rot * u)}deg)`]);
+      });
+      fr.push([rs, "opacity:0;transform:none"], [rs + 0.45, "opacity:1;transform:none"]);
+      return fr;
+    };
+    css += kfBlock(`ha${id}`, half(1, "a")) + kfBlock(`hb${id}`, half(-1, "b"));
+    enem += `<g transform="translate(${n1(en.x)},${GROUND})"><g class="a" style="animation-name:rc${id}">` +
+      `<g class="a" clip-path="url(#ca${id})" style="animation-name:ha${id}"><use href="#enemy"/></g>` +
+      `<g class="a" clip-path="url(#cb${id})" style="animation-name:hb${id}"><use href="#enemy"/></g>` +
+      `<use href="#enemy" filter="url(#white)" class="a" style="opacity:0;animation-name:fl${id}"/>` +
+      `</g></g>`;
+
+    // impact effects for every hit
+    en.hits.forEach((h, hi) => {
+      const k = `${id}_${hi}`;
+      const ang = Math.atan2(h.d[1], h.d[0]) / D2R;
+      // slash mark (lens) along the cut direction
+      css += kfBlock(`lens${k}`, [
+        [0, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) rotate(${n1(ang)}deg) scale(.2,.5)`],
+        [h.t - 0.002, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) rotate(${n1(ang)}deg) scale(.2,.5)`],
+        [h.t + 0.03, `opacity:1;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) rotate(${n1(ang)}deg) scale(1,1)`],
+        [h.t + 0.3, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) rotate(${n1(ang)}deg) scale(1.2,.25)`],
+      ]);
+      fxHigh += `<path class="a fx" style="animation-name:lens${k}" d="M-30,0 Q0,-6 30,0 Q0,6 -30,0Z" fill="${p.trail}" stroke="${p.trailStroke}" stroke-width=".6"/>`;
+      // impact flash star
+      css += kfBlock(`star${k}`, [
+        [0, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) scale(.3)`],
+        [h.t - 0.002, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) scale(.3)`],
+        [h.t + 0.025, `opacity:1;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) scale(1.25)`],
+        [h.t + 0.2, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px) scale(1.7)`],
+      ]);
+      fxHigh += `<path class="a fx" style="animation-name:star${k}" d="M0,-9L2,-2L9,0L2,2L0,9L-2,2L-9,0L-2,-2Z" fill="${p.spark}" opacity="0"/>`;
+      // sparks
+      const rs2 = rng(100 + ei * 10 + hi);
+      for (let s = 0; s < 9; s++) {
+        const a = Math.atan2(h.d[1], h.d[0]) + (rs2() - 0.5) * 2.6 + (rs2() < 0.5 ? 0 : Math.PI);
+        const sp = 45 + rs2() * 80;
+        const life = 0.28 + rs2() * 0.22;
+        const fr = ballistic(h.t, h.c.map((v, i2) => (i2 === 0 ? v : v)), [Math.cos(a) * sp, Math.sin(a) * sp], 260, life, 4);
+        const nm = `sp${k}_${s}`;
+        css += kfBlock(nm, [[0, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px)`],
+          [h.t - 0.002, `opacity:0;transform:translate(${n1(h.c[0])}px,${n1(h.c[1])}px)`],
+          ...fr.map(([tt, q], i3) => [tt, `opacity:${i3 === fr.length - 1 ? 0 : n2(1 - i3 / (fr.length * 1.2))};transform:translate(${n1(q[0])}px,${n1(q[1])}px)`])]);
+        fxHigh += `<circle class="a fx" style="animation-name:${nm}" r="${n1(0.9 + rs2() * 0.8)}" fill="${p.spark}"/>`;
+      }
+    });
+    // block debris from the final cut
+    const rd = rng(500 + ei);
+    const cols = [E.hi, E.body, E.mid, E.shade];
+    for (let s = 0; s < 10; s++) {
+      const a = Math.atan2(nrm[1], nrm[0]) + (rd() - 0.5) * 3.4 + (rd() < 0.5 ? 0 : Math.PI);
+      const sp = 40 + rd() * 90;
+      const life = 0.7 + rd() * 0.3;
+      const o = [en.x + (rd() - 0.5) * 22, GROUND - 10 - rd() * 36];
+      const fr = ballistic(last.t + 0.04, o, [Math.cos(a) * sp, Math.sin(a) * sp - 30], 300, life, 5);
+      const nm = `db${id}_${s}`;
+      const rot0 = rd() * 90, rot1 = rot0 + (rd() - 0.5) * 360;
+      css += kfBlock(nm, [[0, `opacity:0;transform:translate(${n1(o[0])}px,${n1(o[1])}px)`],
+        [last.t + 0.039, `opacity:0;transform:translate(${n1(o[0])}px,${n1(o[1])}px)`],
+        ...fr.map(([tt, q], i3) => [tt, `opacity:${i3 === fr.length - 1 ? 0 : (i3 < 3 ? 1 : n2(1 - (i3 - 2) / 3))};transform:translate(${n1(q[0])}px,${n1(q[1])}px) rotate(${n1(lerp(rot0, rot1, i3 / (fr.length - 1)))}deg)`])]);
+      const sz = 2.4 + rd() * 2.4;
+      fxHigh += `<rect class="a fx" style="animation-name:${nm}" x="${n1(-sz / 2)}" y="${n1(-sz / 2)}" width="${n1(sz)}" height="${n1(sz)}" fill="${cols[s % 4]}"/>`;
+    }
+  });
+
+  /* ---------- blade trails: quads along the real tip path ---------- */
+  let trails = "";
+  let tid = 0;
+  for (const sg of segs.filter((s) => s.strikes)) {
+    for (const s of sg.strikes) {
+      const ta = sg.t0 + s.a - 0.02, tb = sg.t0 + s.b + 0.05;
+      const dtt = 1 / 45;
+      let prev = null;
+      for (let t = ta; t <= tb + 1e-9; t += dtt) {
+        const st = stateAt(t);
+        const tp = tipW(st), md = midW(st);
+        if (prev) {
+          const mv = Math.hypot(tp[0] - prev.tp[0], tp[1] - prev.tp[1]);
+          if (mv > 0.8) {
+            const nm = `tr${tid++}`;
+            css += kfBlock(nm, [[0, "opacity:0"], [t - 0.025, "opacity:0"], [t, "opacity:.92"], [t + 0.07, "opacity:.62"], [t + 0.34, "opacity:0"]]);
+            trails += `<g class="a fx" style="animation-name:${nm}">` +
+              `<polygon points="${n1(prev.tp[0])},${n1(prev.tp[1])} ${n1(tp[0])},${n1(tp[1])} ${n1(md[0])},${n1(md[1])} ${n1(prev.md[0])},${n1(prev.md[1])}" fill="${p.trailGlow}" opacity=".55"/>` +
+              `<line x1="${n1(prev.tp[0])}" y1="${n1(prev.tp[1])}" x2="${n1(tp[0])}" y2="${n1(tp[1])}" stroke="${p.trail}" stroke-width="2.2" stroke-linecap="round"/>` +
+              (p.trailStroke !== "none" ? `<line x1="${n1(prev.tp[0])}" y1="${n1(prev.tp[1])}" x2="${n1(tp[0])}" y2="${n1(tp[1])}" stroke="${p.trailStroke}" stroke-width=".7" stroke-linecap="round" opacity=".9"/>` : "") +
+              `</g>`;
+          }
+        }
+        prev = { tp, md };
       }
     }
   }
-  return grid;
-}
 
-// ---------- animation timing (total 18.0s cinematic loop) ----------
-const T = 18.0;
-const pct = (s) => ((s / T) * 100).toFixed(3);
-
-// Key Choreography Benchmarks (seconds):
-const EVT = {
-  enter: 0.0,
-  // 1. Jumping 360° somersault roll over bamboo spike barricade at X = 220
-  jumpStart: 2.1,
-  jumpFlipStart: 2.3,
-  jumpApex: 2.8,
-  jumpFlipEnd: 3.3,
-  jumpLand: 3.5,
-  jumpRecover: 3.8,
-  // 2. Enemy 1 (Corrupted Ronin at X = 350) — Horizontal Calligraphy Slash
-  e1Approach: 4.9,
-  e1Windup: 5.2,
-  e1Hit: 5.5,
-  e1Recover: 6.0,
-  // 3. Ground 360° combat forward roll under Torii Lantern Gate at X = 530
-  rollStart: 7.5,
-  rollSpinStart: 7.8,
-  rollUnder: 8.4,
-  rollSpinEnd: 9.0,
-  rollEnd: 9.3,
-  rollRecover: 9.7,
-  // 4. Enemy 2 (Shadow Assassin at X = 650) — Diagonal Crescent Slice
-  e2Approach: 10.7,
-  e2Windup: 11.0,
-  e2Hit: 11.3,
-  e2Recover: 11.8,
-  // 5. CLIMACTIC MINI-BOSS BATTLE: Demon Oni Warlord at X = 780!
-  bossApproach: 12.6,
-  bossLeap: 13.0,
-  bossStrike: 13.5, // Ultimate Sakura Iaijutsu Strike!
-  bossShatter: 13.7, // Oni breaks apart into spirit embers
-  bossSheath: 14.3, // Samurai flicks blade & clicks scabbard (Noto)
-  bossRecover: 15.0,
-  // Exit Sprint into the moonlight
-  exitDash: 16.2,
-  offscreen: 16.6,
-  respawn: 17.2,
-  loopEnd: 18.0,
-};
-
-// Shinobi trajectory points: [time_sec, x, y_offset_from_ground]
-const NINJA_TRAJECTORY = [
-  [0.0, -80, 0],
-  [1.0, 30, 0],
-  [EVT.jumpStart - 0.2, 160, 0],
-  [EVT.jumpStart, 180, 2], // Anticipation crouch before somersault
-  [EVT.jumpStart + 0.35, 200, -36], // Rising
-  [EVT.jumpApex, 220, -52], // Aerial somersault apex soaring over spikes
-  [EVT.jumpApex + 0.35, 240, -32], // Falling
-  [EVT.jumpLand, 260, 2], // Cushioned landing
-  [EVT.jumpRecover, 280, 0], // Rebounded into run
-  [EVT.e1Windup, 320, 0],
-  [EVT.e1Hit, 350, 0], // Slash impact on Bandit
-  [EVT.e1Recover, 375, 0],
-  [6.8, 460, 0], // Uninterrupted moonlit run
-  [EVT.rollStart, 495, 0], // Diving into ground combat roll
-  [EVT.rollUnder - 0.3, 520, 0], // Rolling under Torii gate
-  [EVT.rollUnder + 0.3, 545, 0],
-  [EVT.rollEnd, 570, 0], // Rolling out onto knee
-  [EVT.rollRecover, 590, 0], // Rising into sprint
-  [EVT.e2Windup, 625, 0],
-  [EVT.e2Hit, 650, 0], // Diagonal slice on Assassin
-  [EVT.e2Recover, 675, 0],
-  [EVT.bossApproach, 725, 0],
-  [EVT.bossLeap, 750, -22], // High aerial leap toward Demon Oni
-  [EVT.bossStrike, 775, 0], // Ultimate downward Iaijutsu execution!
-  [EVT.bossSheath, 785, 2], // Sword sheathing pose
-  [EVT.bossRecover, 805, 0],
-  [EVT.exitDash, 920, 0],
-  [EVT.offscreen, 1000, 0], // Exited right
-  [EVT.loopEnd - 0.01, 1000, 0],
-  [EVT.loopEnd, -80, 0], // Instant reset
-];
-
-// ---------- SVG builder ----------
-function buildSvg(grid, theme) {
-  const p = PALETTES[theme];
-
-  // 1. Distant Moon, Fog, and Bamboo Pagoda Silhouettes
-  const moonX = 810;
-  const moonY = 38;
-  const moonR = 26;
-  const skyBackground = `
-    <!-- Glowing Full Moon -->
-    <circle cx="${moonX}" cy="${moonY}" r="${moonR + 18}" fill="${p.moonHalo}"/>
-    <circle cx="${moonX}" cy="${moonY}" r="${moonR + 8}" fill="${p.moonHalo}"/>
-    <circle cx="${moonX}" cy="${moonY}" r="${moonR}" fill="${p.moon}"/>
-    <!-- Lunar crater details -->
-    <circle cx="${moonX - 8}" cy="${moonY - 6}" r="6" fill="${p.moonCrater}"/>
-    <circle cx="${moonX + 9}" cy="${moonY + 7}" r="5" fill="${p.moonCrater}"/>
-    <circle cx="${moonX - 3}" cy="${moonY + 11}" r="4" fill="${p.moonCrater}"/>
-    <!-- Distant Pagoda & Mountain Silhouettes -->
-    <path d="M 0,90 Q 60,65 140,85 T 280,80 T 420,95 T 560,75 T 700,90 T 850,70 L 920,85 L 920,170 L 0,170 Z" fill="${p.bg}" opacity="0.35"/>
-  `;
-
-  // 2. 5 Distinct Movement Lanes with Torii & Bamboo Motifs
-  let lanesSvg = "";
-  for (let r = 0; r < ROWS; r++) {
-    const y = PAD_TOP + r * ROW_H;
-    const bgCol = p.laneRowBg[r];
-    lanesSvg += `<rect x="0" y="${y}" width="${WIDTH}" height="${ROW_H}" fill="${bgCol}"/>`;
-    if (r > 0) {
-      lanesSvg += `<line x1="0" y1="${y}" x2="${WIDTH}" y2="${y}" stroke="${p.laneLine}" stroke-dasharray="3,7" stroke-width="1"/>`;
-    }
+  /* ---------- dust puffs ---------- */
+  let dust = "";
+  let did = 0;
+  const puff = (t, x, y, r0, r1, drift, a = 0.35) => {
+    const nm = `du${did++}`;
+    css += kfBlock(nm, [
+      [0, `opacity:0;transform:translate(${n1(x)}px,${n1(y)}px) scale(.4)`],
+      [t - 0.002, `opacity:0;transform:translate(${n1(x)}px,${n1(y)}px) scale(.4)`],
+      [t + 0.05, `opacity:${a};transform:translate(${n1(x)}px,${n1(y - 1)}px) scale(${n1(r0)})`],
+      [t + 0.7, `opacity:0;transform:translate(${n1(x + drift)}px,${n1(y - 7)}px) scale(${n1(r1)})`],
+    ]);
+    dust += `<circle class="a fx" style="animation-name:${nm}" r="2" fill="${p.dust}"/>`;
+  };
+  for (const sg of segs) {
+    if (sg.takeoff != null) { const st = stateAt(sg.t0 + sg.takeoff); puff(sg.t0 + sg.takeoff, st.x - 4, GROUND - 1, 1.3, 2.8, -8, 0.4); puff(sg.t0 + sg.takeoff + 0.03, st.x + 4, GROUND - 1, 1.1, 2.4, 6, 0.3); }
+    if (sg.landing != null) { const st = stateAt(sg.t0 + sg.landing); puff(sg.t0 + sg.landing, st.x - 6, GROUND - 1, 1.4, 3, -10, 0.42); puff(sg.t0 + sg.landing, st.x + 8, GROUND - 1, 1.3, 2.8, 10, 0.38); }
+    if (sg.slideDust) for (let t = sg.slideDust[0]; t < sg.slideDust[1]; t += 0.14) { const st = stateAt(sg.t0 + t); puff(sg.t0 + t, st.x - 10, GROUND - 1, 1, 2.3, -9, 0.3); }
+    if (sg.strikes && sg.name === "atk1") { const st = stateAt(sg.t0 + 1.78); puff(sg.t0 + 1.78, st.x - 18, GROUND - 1, 1.2, 2.8, -10, 0.38); }
   }
-
-  // Row Indicators on left margin (Traditional Kanji + English)
-  let laneMarkers = "";
-  const laneNames = ["一 · SKY", "二 · MIST", "三 · BAMBOO", "四 · TORII", "五 · PATH"];
-  for (let r = 0; r < ROWS; r++) {
-    const y = PAD_TOP + r * ROW_H + ROW_H / 2 + 3;
-    laneMarkers += `<text x="8" y="${y}" fill="${p.textMuted}" font-family="serif, 'Hiragino Mincho Pro', sans-serif" font-size="7.5" font-weight="600" letter-spacing="0.8" opacity="0.75">${laneNames[r]}</text>`;
-  }
-
-  // 3. Contribution Grid Cells: Ancient Jade / Moss Stone Seals
-  let cellsSvg = "";
-  for (let r = 0; r < ROWS; r++) {
-    const cy = PAD_TOP + r * ROW_H + (ROW_H - CELL_SIZE) / 2;
-    for (let c = 0; c < COLS; c++) {
-      const cx = GRID_START_X + c * CELL_PITCH;
-      const level = grid[r][c] || 0;
-      const fill = level === 0 ? p.emptyCell : p.levels[Math.min(level - 1, 3)];
-      const op = level === 0 ? "0.35" : "0.95";
-      cellsSvg += `<rect x="${cx}" y="${cy}" width="${CELL_SIZE}" height="${CELL_SIZE}" rx="2" fill="${fill}" opacity="${op}"/>`;
-    }
-  }
-
-  // 4. Traditional Wooden Bridge Ground Rail at GROUND_Y (170)
-  const railSvg = `
-    <!-- Wooden bridge plank floor -->
-    <line x1="0" y1="${GROUND_Y}" x2="${WIDTH}" y2="${GROUND_Y}" stroke="${p.bridgeRail}" stroke-width="2.5"/>
-    <line x1="0" y1="${GROUND_Y + 2}" x2="${WIDTH}" y2="${GROUND_Y + 2}" stroke="${p.bridgePost}" stroke-width="1.5" opacity="0.8"/>
-    <!-- Guard posts & hanging lanterns -->
-    ${Array.from({ length: 23 }, (_, i) => `
-      <rect x="${i * 40 + 6}" y="${GROUND_Y - 4}" width="4" height="8" rx="1" fill="${p.bridgePost}"/>
-      <circle cx="${i * 40 + 8}" cy="${GROUND_Y - 5}" r="2.2" fill="${p.toriiBeam}" opacity="0.8"/>
-    `).join("")}
-  `;
-
-  // 5. Blowing Sakura Petals (animated drifting cherry blossom petals)
-  const sakuraSvg = `
-    <g class="sakura-wind">
-      <ellipse class="sakura s1" cx="120" cy="40" rx="3.5" ry="2" fill="${p.sakura1}"/>
-      <ellipse class="sakura s2" cx="280" cy="70" rx="4" ry="2.2" fill="${p.sakura2}"/>
-      <ellipse class="sakura s3" cx="440" cy="30" rx="3.2" ry="1.8" fill="${p.sakura1}"/>
-      <ellipse class="sakura s4" cx="590" cy="85" rx="3.8" ry="2" fill="${p.sakura2}"/>
-      <ellipse class="sakura s5" cx="720" cy="50" rx="3" ry="1.7" fill="${p.sakura1}"/>
-      <ellipse class="sakura s6" cx="870" cy="65" rx="3.6" ry="2" fill="${p.sakura2}"/>
-      <ellipse class="sakura s7" cx="200" cy="115" rx="3.5" ry="1.9" fill="${p.sakura1}"/>
-      <ellipse class="sakura s8" cx="510" cy="125" rx="3.2" ry="1.8" fill="${p.sakura2}"/>
-      <ellipse class="sakura s9" cx="820" cy="110" rx="4" ry="2.1" fill="${p.sakura1}"/>
-    </g>
-  `;
-
-  // 6. Obstacle 1: Bamboo Stake Barricade at X = 220 (Low obstacle - jump somersault)
-  const spikeX = 220;
-  const spikeSvg = `
-    <g id="bamboo-spikes">
-      <!-- Sharpened bamboo stakes lashed together -->
-      <polygon points="${spikeX - 16},170 ${spikeX - 11},146 ${spikeX - 6},170" fill="#a16207"/>
-      <polygon points="${spikeX - 8},170 ${spikeX - 1},142 ${spikeX + 5},170" fill="#ca8a04"/>
-      <polygon points="${spikeX + 3},170 ${spikeX + 10},148 ${spikeX + 16},170" fill="#a16207"/>
-      <!-- Bamboo segment rings & cut angle highlights -->
-      <line x1="${spikeX - 13}" y1="156" x2="${spikeX - 8}" y2="156" stroke="#4d2c00" stroke-width="1.2"/>
-      <line x1="${spikeX - 4}" y1="154" x2="${spikeX + 1}" y2="154" stroke="#4d2c00" stroke-width="1.2"/>
-      <line x1="${spikeX + 7}" y1="158" x2="${spikeX + 12}" y2="158" stroke="#4d2c00" stroke-width="1.2"/>
-      <!-- Rope lashings & warning seal -->
-      <line x1="${spikeX - 18}" y1="164" x2="${spikeX + 18}" y2="164" stroke="#eab308" stroke-width="2" stroke-dasharray="3,2"/>
-    </g>
-  `;
-
-  // 7. Obstacle 2: Sacred Torii Shrine Gate with Hanging Lanterns at X = 530
-  // Clearance under Torii crossbeam = 28px (ninja rolls 360° forward underneath!)
-  const toriiX = 530;
-  const toriiSvg = `
-    <g id="torii-gate">
-      <!-- Curved Top Kasagi Beam -->
-      <path d="M ${toriiX - 30},12 Q ${toriiX},6 ${toriiX + 30},12 L ${toriiX + 28},19 Q ${toriiX},13 ${toriiX - 28},19 Z" fill="${p.toriiCap}"/>
-      <!-- Primary Vermilion Shimaki Crossbeam -->
-      <rect x="${toriiX - 26}" y="19" width="52" height="7" rx="1.5" fill="${p.toriiBeam}"/>
-      <!-- Secondary Nuki Tie-beam at y = 40 -->
-      <rect x="${toriiX - 24}" y="40" width="48" height="4.5" rx="1" fill="${p.toriiBeam}"/>
-      <!-- Twin Vermilion Pillars grounded to path -->
-      <rect x="${toriiX - 20}" y="19" width="6" height="151" fill="${p.toriiPillar}"/>
-      <rect x="${toriiX + 14}" y="19" width="6" height="151" fill="${p.toriiPillar}"/>
-      <!-- Stone Pedestal Base Feet (Kamebara) at ground level -->
-      <rect x="${toriiX - 22}" y="166" width="10" height="4" rx="1" fill="${p.toriiCap}"/>
-      <rect x="${toriiX + 12}" y="166" width="10" height="4" rx="1" fill="${p.toriiCap}"/>
-      <!-- Mid-height Lintel & Sacred Shimenawa Rope at y = 132 -->
-      <rect x="${toriiX - 20}" y="132" width="40" height="3" rx="0.5" fill="${p.toriiBeam}"/>
-      <path d="M ${toriiX - 19},134 Q ${toriiX},138 ${toriiX + 19},134" stroke="#fef08a" stroke-width="1.8" fill="none"/>
-      <polygon points="${toriiX - 9},135 ${toriiX - 6},135 ${toriiX - 8},142 ${toriiX - 11},142" fill="#ffffff"/>
-      <polygon points="${toriiX + 6},135 ${toriiX + 9},135 ${toriiX + 7},142 ${toriiX + 4},142" fill="#ffffff"/>
-      <!-- Hanging Paper Lantern in center (clearance below lantern = 28px) -->
-      <rect x="${toriiX - 4.5}" y="132" width="9" height="10" rx="2" fill="${p.toriiBeam}"/>
-      <circle cx="${toriiX}" cy="137" r="2.5" fill="#fef08a"/>
-    </g>
-  `;
-
-  // 8. Regular Enemies (Corrupted Bandits & Shadow Assassins):
-  const enemy1Svg = `
-    <g id="enemy-1" class="e1-group">
-      <!-- Top half: Rogue Bandit with Straw Cape & Mask -->
-      <g class="e1-top">
-        <path d="M 340,147 L 344,128 L 356,128 L 360,147 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
-        <ellipse cx="350" cy="133" rx="7" ry="5" fill="${p.toriiCap}"/>
-        <rect x="345" y="135" width="10" height="2.5" rx="1" fill="${p.enemyEye}"/>
-      </g>
-      <!-- Bottom half: Hakama & Tabi -->
-      <g class="e1-bot">
-        <path d="M 339,148 L 361,148 L 358,170 L 342,170 Z" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
-        <line x1="350" y1="152" x2="350" y2="168" stroke="${p.enemyArmor}" stroke-width="1"/>
-      </g>
-    </g>
-  `;
-
-  const enemy2Svg = `
-    <g id="enemy-2" class="e2-group">
-      <!-- Upper piece: Shadow Ronin with Jingasa helmet -->
-      <g class="e2-top">
-        <polygon points="640,128 660,128 663,152 646,148" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
-        <polygon points="636,132 664,132 650,126" fill="${p.toriiCap}"/>
-        <rect x="645" y="136" width="9" height="2.5" rx="1" fill="${p.enemyEye}"/>
-      </g>
-      <!-- Lower piece: Armored greaves -->
-      <g class="e2-bot">
-        <polygon points="640,130 647,149 662,153 659,170 642,170 638,151" fill="${p.enemyBody}" stroke="${p.enemyArmor}" stroke-width="1.3"/>
-      </g>
-    </g>
-  `;
-
-  // 9. CLIMACTIC MINI-BOSS: Imposing Demon Oni Warlord (at X = 780)!
-  // Stature: Taller (spans ~2.4 rows!), horned Oni demon mask, glowing eyes, massive spiked Kanabo club!
-  const bossSvg = `
-    <g id="mini-boss-oni" class="boss-group">
-      <!-- Left side of Demon Oni -->
-      <g class="boss-left">
-        <!-- Horn left -->
-        <path d="M 776,110 C 772,98 764,96 760,94 C 764,103 770,111 774,114 Z" fill="${p.oniHorns}"/>
-        <!-- Mask & Head Left -->
-        <path d="M 778,112 L 766,118 L 768,136 L 778,144 Z" fill="${p.oniMask}" stroke="${p.oniArmor}" stroke-width="1.4"/>
-        <circle cx="771" cy="124" r="3" fill="${p.oniEye}"/>
-        <!-- Torso & Armor Left -->
-        <path d="M 778,144 L 760,148 L 763,170 L 778,170 Z" fill="${p.oniBody}" stroke="${p.oniArmor}" stroke-width="1.5"/>
-        <polygon points="764,136 754,142 760,154" fill="${p.oniArmor}"/>
-      </g>
-      <!-- Right side of Demon Oni + Giant Kanabo Club -->
-      <g class="boss-right">
-        <!-- Horn right -->
-        <path d="M 780,110 C 784,98 792,96 796,94 C 792,103 786,111 782,114 Z" fill="${p.oniHorns}"/>
-        <!-- Mask & Head Right -->
-        <path d="M 778,112 L 790,118 L 788,136 L 778,144 Z" fill="${p.oniMask}" stroke="${p.oniArmor}" stroke-width="1.4"/>
-        <circle cx="785" cy="124" r="3" fill="${p.oniEye}"/>
-        <!-- Torso & Armor Right -->
-        <path d="M 778,144 L 796,148 L 793,170 L 778,170 Z" fill="${p.oniBody}" stroke="${p.oniArmor}" stroke-width="1.5"/>
-        <polygon points="792,136 802,142 796,154" fill="${p.oniArmor}"/>
-        <!-- Giant Iron Kanabo Club held in hand -->
-        <path d="M 796,146 L 808,124 L 814,127 L 802,149 Z" fill="${p.oniClub}"/>
-        <circle cx="810" cy="124" r="2.2" fill="${p.oniClubSpikes}"/>
-        <circle cx="806" cy="131" r="2.2" fill="${p.oniClubSpikes}"/>
-        <circle cx="803" cy="138" r="2.2" fill="${p.oniClubSpikes}"/>
-      </g>
-    </g>
-  `;
-
-  // 10. Visual Effects (Calligraphic Sumi-e & Crimson Slashes + Boss Sakura Burst)
-  // Attack 1: Horizontal Calligraphy Slash (at X = 350)
-  const vfx1Svg = `
-    <g class="vfx-1">
-      <path d="M 305,152 Q 345,138 410,144 Q 350,152 305,152 Z" fill="${p.slashTrail}"/>
-      <path d="M 300,150 Q 350,140 415,146" stroke="${p.slashGlow}" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
-      <path d="M 302,150 Q 350,140 413,146" stroke="${p.slashCore}" stroke-width="2" stroke-linecap="round" fill="none"/>
-      <!-- Cherry blossom impact spark petals -->
-      <ellipse cx="360" cy="138" rx="3.5" ry="2" fill="${p.sakura1}"/>
-      <ellipse cx="372" cy="148" rx="4" ry="2.2" fill="${p.sakura2}"/>
-      <circle cx="350" cy="146" r="2" fill="${p.sparkAlt}"/>
-    </g>
-  `;
-
-  // Attack 2: Diagonal Crescent Slice (at X = 650)
-  const vfx2Svg = `
-    <g class="vfx-2">
-      <path d="M 610,105 Q 648,136 686,168 Q 655,146 618,115 Z" fill="${p.slashTrail}"/>
-      <path d="M 608,103 Q 650,140 690,170" stroke="${p.slashGlow}" stroke-width="5.2" stroke-linecap="round" fill="none" opacity="0.9"/>
-      <path d="M 610,105 Q 650,140 688,168" stroke="${p.slashCore}" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-      <ellipse cx="660" cy="134" rx="4" ry="2" fill="${p.sakura1}"/>
-      <circle cx="672" cy="150" r="2.2" fill="${p.sparkAlt}"/>
-      <circle cx="640" cy="120" r="1.8" fill="${p.spark}"/>
-    </g>
-  `;
-
-  // Attack 3: CLIMACTIC BOSS EXECUTION: Sakura Iaijutsu Blossom Cleave (at X = 780)!
-  const vfxBossSvg = `
-    <g class="vfx-boss">
-      <!-- Massive Radiant Curved Slash Arc -->
-      <path d="M 750,65 Q 815,115 775,174 Q 760,125 745,80 Z" fill="${p.slashTrail}"/>
-      <path d="M 746,62 Q 820,118 775,176" stroke="${p.slashGlow}" stroke-width="6.5" stroke-linecap="round" fill="none" opacity="0.95"/>
-      <path d="M 748,64 Q 818,118 775,174" stroke="${p.slashCore}" stroke-width="2.8" stroke-linecap="round" fill="none"/>
-      <!-- Dramatic Sakura Petal Blossom Explosion -->
-      <ellipse cx="780" cy="115" rx="5" ry="2.5" fill="${p.sakura1}"/>
-      <ellipse cx="795" cy="126" rx="4.5" ry="2.2" fill="${p.sakura2}"/>
-      <ellipse cx="765" cy="132" rx="4.8" ry="2.4" fill="${p.sakura1}"/>
-      <ellipse cx="805" cy="145" rx="5.2" ry="2.6" fill="${p.sakura2}"/>
-      <ellipse cx="760" cy="150" rx="4" ry="2" fill="${p.sakura1}"/>
-      <!-- Impact Shockwave Star -->
-      <polygon points="780,120 784,133 798,137 784,141 780,154 776,141 762,137 776,133" fill="${p.slashCore}"/>
-      <circle cx="780" cy="137" r="4" fill="${p.sparkAlt}"/>
-    </g>
-  `;
-
-  // 11. Shinobi Ronin Character Rig:
-  // Height: ~60px (2 rows).
-  // Features:
-  // - Traditional Ronin Straw Kasa / Shinobi Hood with glowing eye slit.
-  // - Flowing Haori coat ripples in the wind.
-  // - Crimson silk scarf ribbons.
-  // - Katana & wakizashi daisho.
-  // - 4-Frame Fluid Edo Sprint.
-  // - Acrobatic 360° Aerial Somersault Flip.
-  // - Ground 360° Combat Forward Roll.
-  // - Sword Slashes + Sword-sheathing Noto pose!
-  const ninjaRigDef = `
-    <g id="ninja-char">
-      <!-- POSE 1: EDO RONIN SPRINT (4-Frame Stride with Haori flutter & Torso Bob) -->
-      <g class="pose-run">
-        <g class="run-bob">
-          <!-- Flowing Crimson Silk Ribbon -->
-          <path class="scarf-strand-1" d="M -8,-52 C -24,-45 -38,-62 -54,-56 C -38,-66 -22,-56 -8,-55 Z" fill="${p.scarf}"/>
-          <path class="scarf-strand-2" d="M -7,-49 C -20,-42 -30,-52 -44,-48 C -28,-55 -18,-48 -7,-51 Z" fill="${p.scarfLight}" opacity="0.85"/>
-          <!-- Flowing Haori Coat -->
-          <path d="M -10,-46 C -18,-40 -24,-30 -22,-20 C -18,-24 -12,-30 -8,-36 Z" fill="${p.shinobiHaori}"/>
-          <!-- Torso & Hakama -->
-          <polygon points="-8,-46 10,-44 7,-24 -9,-24" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
-          <polygon points="-7,-45 5,-44 3,-25 -8,-25" fill="${p.shinobiArmor}"/>
-          <rect x="-10" y="-27" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
-          <!-- Ronin Head & Straw Kasa Hat -->
-          <ellipse cx="2" cy="-53" rx="7.5" ry="7.5" fill="${p.shinobiSuit}"/>
-          <!-- Conical / Angled Kasa Hat -->
-          <polygon points="-12,-55 16,-52 2,-62" fill="${p.shinobiKasa}"/>
-          <polygon points="1,-53 9,-53 8,-51 0,-51" fill="${p.eye}"/>
-          <!-- Sheathed Katana Daisho -->
-          <path d="M 1,-36 L -18,-24" stroke="${p.katanaGuard}" stroke-width="3" stroke-linecap="round"/>
-          <path d="M -18,-24 L -36,-12" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
-          <line x1="-18" y1="-24" x2="-36" y2="-12" stroke="${p.katanaEdge}" stroke-width="1"/>
-
-          <!-- FRAME 1: Left Lead Contact Stride -->
-          <g class="rf rf1">
-            <path d="M -3,-24 L 7,-14 L 16,0" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L -13,-14 L -18,-2" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L 11,-32 L 18,-24" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
-          </g>
-
-          <!-- FRAME 2: Left Absorption / Passing Stride -->
-          <g class="rf rf2">
-            <path d="M -3,-24 L 8,-12 L 11,0" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L -5,-12 L -2,-1" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L 8,-32 L 12,-22" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
-          </g>
-
-          <!-- FRAME 3: Right Lead Contact Stride -->
-          <g class="rf rf3">
-            <path d="M -3,-24 L -13,-14 L -18,-2" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L 7,-14 L 16,0" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L -6,-32 L -12,-24" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
-          </g>
-
-          <!-- FRAME 4: Right Absorption / Passing Stride -->
-          <g class="rf rf4">
-            <path d="M -3,-24 L -5,-12 L -2,-1" stroke="${p.shinobiSuit}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M -4,-24 L 8,-12 L 11,0" stroke="${p.shinobiArmor}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-            <path d="M 2,-42 L 4,-32 L 6,-22" stroke="${p.shinobiSuit}" stroke-width="4.2" stroke-linecap="round" fill="none"/>
-          </g>
-        </g>
-      </g>
-
-      <!-- POSE 2: JUMPING 360° AERIAL SOMERSAULT FLIP (over bamboo spikes) -->
-      <g class="pose-jump">
-        <g class="aerial-flip-spinner">
-          <circle cx="0" cy="-26" r="23" stroke="${p.slashGlow}" stroke-width="1.6" stroke-dasharray="28,14" fill="none" opacity="0.45"/>
-          <path d="M -10,-34 C -26,-36 -32,-20 -28,-6 C -24,8 -8,4 -4,-2 C -12,2 -20,-10 -16,-24 Z" fill="${p.scarf}"/>
-          <path d="M -13,-36 C -20,-24 -17,-10 -5,-4 C 8,-4 15,-12 13,-24 C 11,-36 1,-40 -13,-36 Z" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.4"/>
-          <ellipse cx="-4" cy="-25" rx="7.5" ry="7.5" fill="${p.shinobiSuit}"/>
-          <polygon points="-7,-25 0,-25 -1,-23 -6,-23" fill="${p.eye}"/>
-          <path d="M -6,-6 C 4,-4 11,-9 8,-19" stroke="${p.shinobiSuit}" stroke-width="4.5" stroke-linecap="round" fill="none"/>
-          <path d="M -12,-38 C -4,-42 12,-34 22,-20" stroke="${p.katanaBlade}" stroke-width="2.6" stroke-linecap="round" fill="none"/>
-          <line x1="-12" y1="-38" x2="22" y2="-20" stroke="${p.katanaEdge}" stroke-width="1.2"/>
-        </g>
-      </g>
-
-      <!-- POSE 3: GROUND 360° COMBAT FORWARD ROLL (under Torii gate) -->
-      <g class="pose-roll">
-        <g class="ground-roll-spinner">
-          <circle cx="0" cy="-13" r="14" stroke="${p.slashGlow}" stroke-width="1.4" stroke-dasharray="18,10" fill="none" opacity="0.4"/>
-          <path d="M -10,-19 C -18,-17 -22,-8 -18,-1 C -12,2 -4,0 0,-3" stroke="${p.scarf}" stroke-width="2.5" fill="none"/>
-          <path d="M -11,-21 C -16,-15 -15,-6 -5,-1 C 6,-1 13,-6 11,-14 C 9,-21 1,-25 -11,-21 Z" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.3"/>
-          <ellipse cx="-3" cy="-13" rx="6.5" ry="6.5" fill="${p.shinobiSuit}"/>
-          <polygon points="-6,-13 0,-13 -1,-11 -5,-11" fill="${p.eye}"/>
-          <path d="M -6,-2 C 3,-1 8,-4 6,-11" stroke="${p.shinobiSuit}" stroke-width="4" stroke-linecap="round" fill="none"/>
-          <path d="M -10,-20 L 14,-7" stroke="${p.katanaBlade}" stroke-width="2.2" stroke-linecap="round"/>
-          <circle cx="5" cy="0" r="1.6" fill="${p.sakura1}"/>
-          <circle cx="-6" cy="0" r="1.4" fill="${p.sparkAlt}"/>
-        </g>
-      </g>
-
-      <!-- POSE 4: HORIZONTAL IAI SLASH (Deep lunge against Bandit) -->
-      <g class="pose-slash-h">
-        <path d="M -16,-48 C -32,-52 -48,-46 -64,-50 C -48,-58 -32,-53 -16,-51 Z" fill="${p.scarf}"/>
-        <polygon points="-12,-44 10,-42 8,-21 -10,-21" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
-        <rect x="-12" y="-25" width="21" height="5" rx="1.5" fill="${p.scarf}"/>
-        <ellipse cx="6" cy="-50" rx="8" ry="8" fill="${p.shinobiSuit}"/>
-        <polygon points="5,-50 13,-50 12,-48 4,-48" fill="${p.eye}"/>
-        <path d="M 6,-21 L 20,-10 L 28,0" stroke="${p.shinobiSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
-        <path d="M -10,-21 L -24,-12 L -34,0" stroke="${p.shinobiArmor}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <path d="M 8,-36 L 54,-33" stroke="${p.katanaBlade}" stroke-width="2.8" stroke-linecap="round"/>
-        <line x1="8" y1="-36" x2="54" y2="-33" stroke="${p.katanaEdge}" stroke-width="1.4"/>
-        <rect x="6" y="-39" width="3.5" height="6" rx="1" fill="${p.katanaGuard}"/>
-      </g>
-
-      <!-- POSE 5: DIAGONAL CRESCENT SLICE (against Assassin) -->
-      <g class="pose-slash-d">
-        <path d="M -12,-50 C -30,-58 -42,-50 -54,-54 C -40,-64 -26,-58 -12,-54 Z" fill="${p.scarf}"/>
-        <polygon points="-10,-44 10,-42 6,-21 -10,-21" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
-        <rect x="-11" y="-26" width="20" height="5" rx="1.5" fill="${p.scarf}"/>
-        <ellipse cx="4" cy="-50" rx="8" ry="8" fill="${p.shinobiSuit}"/>
-        <polygon points="3,-50 11,-50 10,-48 2,-48" fill="${p.eye}"/>
-        <path d="M 6,-21 L 18,-8 L 22,0" stroke="${p.shinobiSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
-        <path d="M -10,-21 L -20,-10 L -26,0" stroke="${p.shinobiArmor}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <path d="M -3,-50 L 40,-12" stroke="${p.katanaBlade}" stroke-width="3" stroke-linecap="round"/>
-        <line x1="-3" y1="-50" x2="40" y2="-12" stroke="${p.katanaEdge}" stroke-width="1.4"/>
-      </g>
-
-      <!-- POSE 6: CLIMACTIC BOSS EXECUTION / BLADE SHEATHING (Noto pose) -->
-      <g class="pose-slash-o">
-        <path d="M -10,-46 C -26,-38 -38,-26 -48,-18 C -36,-28 -22,-40 -10,-48 Z" fill="${p.scarf}"/>
-        <!-- Dynamic low stance -->
-        <polygon points="-10,-42 8,-40 6,-19 -10,-19" fill="${p.shinobiSuit}" stroke="${p.shinobiArmor}" stroke-width="1.2"/>
-        <rect x="-11" y="-24" width="19" height="5" rx="1.5" fill="${p.scarf}"/>
-        <ellipse cx="3" cy="-47" rx="8" ry="8" fill="${p.shinobiSuit}"/>
-        <polygon points="2,-47 10,-47 9,-45 1,-45" fill="${p.eye}"/>
-        <!-- Deep stance legs -->
-        <path d="M 6,-19 L 14,-6 L 16,0" stroke="${p.shinobiSuit}" stroke-width="5.2" stroke-linecap="round" fill="none"/>
-        <path d="M -10,-19 L -18,-8 L -20,0" stroke="${p.shinobiArmor}" stroke-width="4.8" stroke-linecap="round" fill="none"/>
-        <!-- Katana brought down with two hands -->
-        <path d="M 14,-56 L 26,-2" stroke="${p.katanaBlade}" stroke-width="3.4" stroke-linecap="round"/>
-        <line x1="14" y1="-56" x2="26" y2="-2" stroke="${p.katanaEdge}" stroke-width="1.5"/>
-        <circle cx="14" cy="-52" r="2.8" fill="${p.katanaGuard}"/>
-      </g>
-    </g>
-  `;
-
-  // 12. CSS Keyframes
-  const ninjaKf = NINJA_TRAJECTORY.map(([time, x, y]) => {
-    const pVal = pct(time);
-    const ty = GROUND_Y + y;
-    return `${pVal}% { transform: translate(${x.toFixed(1)}px, ${ty.toFixed(1)}px); }`;
-  }).join("\n");
-
-  const dur = `${T.toFixed(3)}s`;
-
-  const css = `
-    /* Canvas base */
-    .bg { fill: ${p.bg}; }
-    
-    /* Ninja carrier motion */
-    #ninja-carrier {
-      animation: ninjaTravel ${dur} linear infinite;
-    }
-    .ghost-1 {
-      animation: ninjaTravel ${dur} linear infinite;
-      animation-delay: -0.07s;
-      opacity: 0.32;
-    }
-    .ghost-2 {
-      animation: ninjaTravel ${dur} linear infinite;
-      animation-delay: -0.14s;
-      opacity: 0.16;
-    }
-    @keyframes ninjaTravel {
-      ${ninjaKf}
-    }
-
-    /* Poses visibility */
-    .pose-run { animation: animRun ${dur} step-end infinite; }
-    .pose-jump { opacity: 0; animation: animJump ${dur} step-end infinite; }
-    .pose-roll { opacity: 0; animation: animRoll ${dur} step-end infinite; }
-    .pose-slash-h { opacity: 0; animation: animSlashH ${dur} step-end infinite; }
-    .pose-slash-d { opacity: 0; animation: animSlashD ${dur} step-end infinite; }
-    .pose-slash-o { opacity: 0; animation: animSlashO ${dur} step-end infinite; }
-
-    @keyframes animRun {
-      0%, 11.66% { opacity: 1; }
-      11.67%, 21.09% { opacity: 0; }
-      21.10%, 28.88% { opacity: 1; }
-      28.89%, 34.44% { opacity: 0; }
-      34.45%, 41.66% { opacity: 1; }
-      41.67%, 53.88% { opacity: 0; }
-      53.89%, 61.10% { opacity: 1; }
-      61.11%, 67.77% { opacity: 0; }
-      67.78%, 72.21% { opacity: 1; }
-      72.22%, 83.33% { opacity: 0; }
-      83.34%, 100% { opacity: 1; }
-    }
-
-    @keyframes animJump {
-      0%, 11.66% { opacity: 0; }
-      11.67%, 21.09% { opacity: 1; }
-      21.10%, 100% { opacity: 0; }
-    }
-
-    @keyframes animRoll {
-      0%, 41.66% { opacity: 0; }
-      41.67%, 53.88% { opacity: 1; }
-      53.89%, 100% { opacity: 0; }
-    }
-
-    @keyframes animSlashH {
-      0%, 28.88% { opacity: 0; }
-      28.89%, 34.44% { opacity: 1; }
-      34.45%, 100% { opacity: 0; }
-    }
-
-    @keyframes animSlashD {
-      0%, 61.10% { opacity: 0; }
-      61.11%, 67.77% { opacity: 1; }
-      67.78%, 100% { opacity: 0; }
-    }
-
-    @keyframes animSlashO {
-      0%, 72.21% { opacity: 0; }
-      72.22%, 83.33% { opacity: 1; }
-      83.34%, 100% { opacity: 0; }
-    }
-
-    /* Edo Run Mechanics */
-    .run-bob {
-      animation: runBob 0.36s ease-in-out infinite;
-    }
-    @keyframes runBob {
-      0%, 50%, 100% { transform: translateY(0px); }
-      25%, 75% { transform: translateY(-2.5px); }
-    }
-
-    .rf { opacity: 0; }
-    .rf1 { animation: cycleRf1 0.36s step-end infinite; }
-    .rf2 { animation: cycleRf2 0.36s step-end infinite; }
-    .rf3 { animation: cycleRf3 0.36s step-end infinite; }
-    .rf4 { animation: cycleRf4 0.36s step-end infinite; }
-
-    @keyframes cycleRf1 {
-      0%, 24.99% { opacity: 1; }
-      25.00%, 100% { opacity: 0; }
-    }
-    @keyframes cycleRf2 {
-      0%, 24.99% { opacity: 0; }
-      25.00%, 49.99% { opacity: 1; }
-      50.00%, 100% { opacity: 0; }
-    }
-    @keyframes cycleRf3 {
-      0%, 49.99% { opacity: 0; }
-      50.00%, 74.99% { opacity: 1; }
-      75.00%, 100% { opacity: 0; }
-    }
-    @keyframes cycleRf4 {
-      0%, 74.99% { opacity: 0; }
-      75.00%, 100% { opacity: 1; }
-    }
-
-    /* 360° Aerial Somersault Jump over bamboo stakes */
-    .aerial-flip-spinner {
-      transform-origin: 0px -26px;
-      animation: animAerialSomersault ${dur} linear infinite;
-    }
-    @keyframes animAerialSomersault {
-      0%, ${pct(EVT.jumpFlipStart)}% { transform: rotate(0deg); }
-      ${pct(EVT.jumpFlipEnd)}%, 100% { transform: rotate(360deg); }
-    }
-
-    /* 360° Ground Combat Roll under Torii Gate */
-    .ground-roll-spinner {
-      transform-origin: 0px -13px;
-      animation: animGroundRoll ${dur} linear infinite;
-    }
-    @keyframes animGroundRoll {
-      0%, ${pct(EVT.rollSpinStart)}% { transform: rotate(0deg); }
-      ${pct(EVT.rollSpinEnd)}%, 100% { transform: rotate(360deg); }
-    }
-
-    /* Attack 1 VFX and Bandit reaction (X = 350) */
-    .vfx-1 { opacity: 0; animation: animVfx1 ${dur} ease-out infinite; }
-    @keyframes animVfx1 {
-      0%, 30.29% { opacity: 0; }
-      30.30% { opacity: 1; }
-      32.50% { opacity: 0; }
-      100% { opacity: 0; }
-    }
-    .e1-top {
-      transform-origin: 350px 147px;
-      animation: animE1Top ${dur} ease-out infinite;
-    }
-    .e1-bot {
-      transform-origin: 350px 148px;
-      animation: animE1Bot ${dur} ease-out infinite;
-    }
-    @keyframes animE1Top {
-      0%, 30.55% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      33.00% { opacity: 0; transform: translate(24px, -14px) rotate(35deg) scale(0.3); }
-      95.55% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
-      97.50%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-    }
-    @keyframes animE1Bot {
-      0%, 30.55% { opacity: 1; transform: translate(0, 0); }
-      33.00% { opacity: 0; transform: translate(-10px, 12px) scale(0.3); }
-      95.55% { opacity: 0; transform: translate(0, 0); }
-      97.50%, 100% { opacity: 1; transform: translate(0, 0); }
-    }
-
-    /* Attack 2 VFX and Assassin reaction (X = 650) */
-    .vfx-2 { opacity: 0; animation: animVfx2 ${dur} ease-out infinite; }
-    @keyframes animVfx2 {
-      0%, 62.49% { opacity: 0; }
-      62.50% { opacity: 1; }
-      64.60% { opacity: 0; }
-      100% { opacity: 0; }
-    }
-    .e2-top {
-      transform-origin: 650px 145px;
-      animation: animE2Top ${dur} ease-out infinite;
-    }
-    .e2-bot {
-      transform-origin: 650px 145px;
-      animation: animE2Bot ${dur} ease-out infinite;
-    }
-    @keyframes animE2Top {
-      0%, 62.77% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      65.20% { opacity: 0; transform: translate(24px, -16px) rotate(40deg) scale(0.3); }
-      95.55% { opacity: 0; transform: translate(0, 0); }
-      97.50%, 100% { opacity: 1; transform: translate(0, 0); }
-    }
-    @keyframes animE2Bot {
-      0%, 62.77% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      65.20% { opacity: 0; transform: translate(-14px, 14px) rotate(-24deg) scale(0.3); }
-      95.55% { opacity: 0; transform: translate(0, 0); }
-      97.50%, 100% { opacity: 1; transform: translate(0, 0); }
-    }
-
-    /* CLIMACTIC MINI-BOSS BATTLE: Demon Oni Warlord (X = 780) */
-    .vfx-boss { opacity: 0; animation: animVfxBoss ${dur} ease-out infinite; }
-    @keyframes animVfxBoss {
-      0%, 74.89% { opacity: 0; }
-      74.90% { opacity: 1; }
-      78.00% { opacity: 0; }
-      100% { opacity: 0; }
-    }
-    .boss-left {
-      transform-origin: 770px 140px;
-      animation: animBossLeft ${dur} ease-out infinite;
-    }
-    .boss-right {
-      transform-origin: 790px 140px;
-      animation: animBossRight ${dur} ease-out infinite;
-    }
-    @keyframes animBossLeft {
-      0%, 75.20% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      78.50% { opacity: 0; transform: translate(-28px, -18px) rotate(-45deg) scale(0.2); }
-      95.55% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
-      97.50%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-    }
-    @keyframes animBossRight {
-      0%, 75.20% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-      78.50% { opacity: 0; transform: translate(28px, -18px) rotate(45deg) scale(0.2); }
-      95.55% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
-      97.50%, 100% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
-    }
-
-    /* Drifting Sakura Petals Wind Animation */
-    .sakura {
-      animation: sakuraFloat 6s ease-in-out infinite;
-    }
-    .s1 { animation-delay: 0.0s; }
-    .s2 { animation-delay: 1.2s; }
-    .s3 { animation-delay: 2.5s; }
-    .s4 { animation-delay: 3.8s; }
-    .s5 { animation-delay: 4.9s; }
-    .s6 { animation-delay: 0.7s; }
-    .s7 { animation-delay: 2.1s; }
-    .s8 { animation-delay: 3.4s; }
-    .s9 { animation-delay: 4.3s; }
-    @keyframes sakuraFloat {
-      0% { transform: translate(0, 0) rotate(0deg); opacity: 0.8; }
-      50% { transform: translate(35px, 12px) rotate(120deg); opacity: 0.95; }
-      100% { transform: translate(70px, 24px) rotate(240deg); opacity: 0.6; }
-    }
-
-    /* Crimson Scarf Ribbon Flutter */
-    .scarf-strand-1 {
-      animation: scarfFlutter 0.45s ease-in-out infinite alternate;
-      transform-origin: -8px -52px;
-    }
-    .scarf-strand-2 {
-      animation: scarfFlutter 0.45s ease-in-out infinite alternate;
-      animation-delay: -0.2s;
-      transform-origin: -7px -49px;
-    }
-    @keyframes scarfFlutter {
-      0% { transform: rotate(-3deg) scaleY(0.9); }
-      100% { transform: rotate(6deg) scaleY(1.18); }
-    }
-
-    /* Reduced motion accessibility */
-    @media (prefers-reduced-motion: reduce) {
-      #ninja-carrier, .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-boss,
-      .e1-top, .e1-bot, .e2-top, .e2-bot, .boss-left, .boss-right,
-      .aerial-flip-spinner, .ground-roll-spinner, .run-bob, .sakura {
-        animation: none !important;
+  // footfalls while running at pace
+  for (const sg of segs) {
+    if (!/^(enter|run|exit)/.test(sg.name)) continue;
+    let lastIdx = Math.floor((kin(sg.t0).phi - Math.PI / 2) / Math.PI);
+    for (let t = sg.t0; t < sg.t1; t += 0.01) {
+      const { phi, x, v } = kin(t);
+      const idx = Math.floor((phi - Math.PI / 2) / Math.PI);
+      if (idx !== lastIdx) {
+        lastIdx = idx;
+        if (v > 28 && x > 10 && x < W - 10) puff(t, x + 7, GROUND - 1, 0.7, 1.7, -5, 0.2);
       }
-      .ghost-1, .ghost-2, .vfx-1, .vfx-2, .vfx-boss { display: none; }
-      #ninja-carrier { transform: translate(350px, ${GROUND_Y}px); }
     }
-  `;
-
-  // 13. Assemble complete SVG document
-  return `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="Feudal Edo Shinobi Moonlit Journey with Oni Mini-Boss">
-      <title>Edo Shinobi — Moonlit Bamboo Journey and Demon Oni Mini-Boss</title>
-      <style><![CDATA[
-${css}
-      ]]></style>
-      <defs>
-        ${ninjaRigDef}
-      </defs>
-      <!-- Deep Sky & Glowing Full Moon -->
-      <rect width="${WIDTH}" height="${HEIGHT}" class="bg"/>
-      ${skyBackground}
-      <!-- 5 Traditional Movement Lanes -->
-      ${lanesSvg}
-      <!-- Kanji Lane Guide Markers -->
-      ${laneMarkers}
-      <!-- Drifting Sakura Petals -->
-      ${sakuraSvg}
-      <!-- 5-Row Jade & Moss Stone Seals -->
-      ${cellsSvg}
-      <!-- Wooden Bridge Pathway -->
-      ${railSvg}
-      <!-- Obstacles: Bamboo Stakes & Torii Gate -->
-      ${spikeSvg}
-      ${toriiSvg}
-      <!-- Regular Enemies & Demon Oni Mini-Boss -->
-      ${enemy1Svg}
-      ${enemy2Svg}
-      ${bossSvg}
-      <!-- Calligraphic Slashes & Boss Sakura Burst -->
-      ${vfx1Svg}
-      ${vfx2Svg}
-      ${vfxBossSvg}
-      <!-- Shadow Clones (After-images) -->
-      <g class="ghost-2"><use href="#ninja-char"/></g>
-      <g class="ghost-1"><use href="#ninja-char"/></g>
-      <!-- Shinobi Ronin Carrier -->
-      <g id="ninja-carrier">
-        <use href="#ninja-char"/>
-      </g>
-    </svg>
-  `.trim();
-}
-
-// ---------- execution ----------
-async function main() {
-  console.log(`Generating Feudal Edo Shinobi Animation with Demon Oni Mini-Boss for user: "${user}"...`);
-  const grid = await fetchContributions(user);
-  mkdirSync(outDir, { recursive: true });
-
-  for (const theme of ["dark", "light"]) {
-    const svg = buildSvg(grid, theme);
-    const file = join(outDir, `ninja-${theme}.svg`);
-    writeFileSync(file, svg, "utf-8");
-    console.log(`✓ Wrote ${file} (${(svg.length / 1024).toFixed(1)} KB, 5 rows, ${T.toFixed(1)}s loop)`);
   }
+
+  /* ---------- ninja rig ---------- */
+  const B = p.body, F = p.farBody;
+  const limb = (len, w, col) => `<path d="M0,0L0,${len}" stroke="${col}" stroke-width="${w}" stroke-linecap="round" fill="none"/>`;
+  const foot = (col) => `<path d="M-2.4,11.6L5.8,13.4L5.4,15.2L-2.4,15.2Z" fill="${col}"/>`;
+  const leg = (cls, th, sh, col) =>
+    `<g class="a" style="animation-name:${th}">${limb(L.TH, 5.2, col)}<g transform="translate(0,${L.TH})"><g class="a" style="animation-name:${sh}">${limb(L.SH, 4.2, col)}${foot(col)}</g></g></g>`;
+  const sword = `<g transform="translate(0,${L.FA})"><g class="a" style="animation-name:ksw">` +
+    `<rect x="-1.4" y="-4" width="2.8" height="9" rx="1" fill="${B}" stroke="${p.guard}" stroke-width=".35"/>` +
+    `<rect x="-3.6" y="4.6" width="7.2" height="1.8" rx=".9" fill="${p.guard}"/>` +
+    `<path d="M-1.5,6.4L1.5,6.4L1.1,29.5L0,32L-1.1,29.5Z" fill="${p.blade}"/>` +
+    `<path d="M0.55,7L0.4,29" stroke="#fff" stroke-width=".5" opacity=".75"/>` +
+    `</g></g>`;
+  const arm = (a1, a2, col, withSword) =>
+    `<g transform="translate(0,-${L.TO})"><g class="a" style="animation-name:${a1}">${limb(L.UA, 3.8, col)}<g transform="translate(0,${L.UA})"><g class="a" style="animation-name:${a2}">${limb(L.FA, 3.2, col)}<circle cy="${L.FA}" r="1.9" fill="${col}"/>${withSword ? sword : ""}</g></g></g></g>`;
+  const headG = `<g transform="translate(0,-${L.TO})"><g class="a" style="animation-name:khd">` +
+    `<g transform="translate(-5.6,-8.6)"><g class="sc1"><path d="M0,0C-5,-2.4 -9,0 -15.5,-1.6C-10.5,2.4 -5,2.6 0,2.6Z" fill="${p.scarf}"/></g>` +
+    `<g class="sc2"><path d="M0,1.4C-5,2 -8,5 -13,5.4C-9,7 -4.5,6 0,4Z" fill="${p.scarf}" opacity=".8"/></g></g>` +
+    `<circle cx="0" cy="-${L.NK + L.HR}" r="${L.HR}" fill="${B}"/>` +
+    `<path d="M-6.1,-9.9L6.1,-9.9L6.2,-7.9L-6.2,-7.9Z" fill="${p.scarf}"/>` +
+    `<rect x="2.2" y="-6.9" width="3.6" height="1.3" rx=".6" fill="${p.eye}"/>` +
+    `</g></g>`;
+  const torso = `<path d="M-4.6,0L-5.4,-9L-5.8,-${L.TO}L5.6,-${L.TO}L5.2,-9L4.6,0Z" fill="${B}"/>` +
+    `<rect x="-5.2" y="-5.4" width="10.4" height="2.6" fill="${p.scarf}"/>` +
+    `<path d="M-5,-4.2L-9,-2.6L-8.4,-5.2Z" fill="${p.scarf}" opacity=".85"/>`;
+  const rig =
+    `<g class="a r" filter="url(#glow)" style="animation-name:kr">` +
+    leg("lf", "klf", "ksf", F) +
+    `<g class="a" style="animation-name:kto">` + arm("kaf", "kff", F, false) + torso + headG + arm("kan", "kfn", B, true) + `</g>` +
+    leg("ln", "kln", "ksn", B) +
+    `</g>`;
+  defs += `<filter id="glow" x="-70%" y="-70%" width="240%" height="240%">` +
+    `<feGaussianBlur in="SourceAlpha" stdDeviation="1.5" result="b"/><feFlood flood-color="${p.glow}" flood-opacity="${p.glowA}"/>` +
+    `<feComposite in2="b" operator="in" result="g"/><feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+  const shadow = `<ellipse class="a" style="animation-name:ksh" cx="0" cy="0" rx="15" ry="2.6" fill="#000" opacity=".5"/>`;
+
+  css += rigKeyframes();
+
+  const style =
+    `.a{animation-duration:${T}s;animation-iteration-count:infinite;animation-timing-function:linear}` +
+    `.fx{opacity:0}` +
+    `@keyframes fl1{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(6deg)}}` +
+    `@keyframes fl2{0%,100%{transform:rotate(4deg)}50%{transform:rotate(-7deg)}}` +
+    `.sc1{animation:fl1 .62s ease-in-out infinite}.sc2{animation:fl2 .83s ease-in-out infinite}` +
+    css +
+    `@media (prefers-reduced-motion:reduce){.r,.fx{display:none}.a{animation:none}}`;
+
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="A shadow ninja runs left to right through five lanes, jumping a crate, sliding under a barrier and slicing three enemies">` +
+    `<title>Shadow ninja action scene</title><style>${style}</style><defs>${defs}</defs>` +
+    bg + obst + enem + dust + shadow + rig + trails + fxHigh +
+    `<rect width="${W}" height="${H}" fill="url(#vig)"/>` +
+    `</svg>`.replace("</svg>", "");
+  const vig = `<linearGradient id="vig" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${p.sky1}" stop-opacity=".55"/><stop offset=".08" stop-color="${p.sky1}" stop-opacity="0"/><stop offset=".92" stop-color="${p.sky1}" stop-opacity="0"/><stop offset="1" stop-color="${p.sky1}" stop-opacity=".55"/></linearGradient>`;
+  return svg.replace("</defs>", `${vig}</defs>`) + "</svg>";
 }
 
-main().catch((err) => {
-  console.error("Fatal error generating animation:", err);
-  process.exit(1);
-});
+/* ───────────────────────────── main ───────────────────────────── */
+mkdirSync(outDir, { recursive: true });
+for (const theme of ["dark", "light"]) {
+  const svg = build(theme);
+  const file = join(outDir, `ninja-${theme}.svg`);
+  writeFileSync(file, svg);
+  console.log(`${file}: ${(svg.length / 1024).toFixed(0)} KB, loop ${T.toFixed(1)}s`);
+}
+if (DEBUG) for (const l of metrics()) console.log("  " + l);
